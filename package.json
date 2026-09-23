@@ -29,7 +29,7 @@
   },
   "packageManager": "pnpm@11.23.0",
   "bin": {
-    "morfeu": "./dist/cli.js"
+    "morfeu": "dist/cli.js"
   },
   "exports": {
     "./package.json": "./package.json"

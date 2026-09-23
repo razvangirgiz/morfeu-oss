@@ -1,6 +1,6 @@
-# Publishes to npm when a version tag is pushed, with provenance through npm
-# trusted publishing (configure the package on npmjs.com to trust this
-# workflow; no token is stored in the repository).
+# Publishes to npm when a version tag is pushed. Needs an NPM_TOKEN
+# repository secret (an npm granular access token with read and write access
+# to the morfeu package). --provenance links the npm page to this workflow run.
 name: release
 
 on:
@@ -28,6 +28,8 @@ jobs:
       - run: pnpm run typecheck && pnpm run lint && pnpm run test:unit
       - run: node scripts/check-package.mjs
       - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: GitHub release with the changelog section
         env:
           GH_TOKEN: ${{ github.token }}
