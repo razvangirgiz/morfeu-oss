@@ -115,8 +115,9 @@ export const correctTool: Tool = {
       {
         memoryId: text(args, "memory_id"),
         content: text(args, "content"),
-        ...(args.valid_from !== undefined ? { valid_from: optionalDate(args, "valid_from") ?? null } : {}),
-        ...(args.valid_until !== undefined ? { valid_until: optionalDate(args, "valid_until") ?? null } : {}),
+        // Agents often send null for optional fields: null means "keep the old dates", never "always".
+        ...(optionalDate(args, "valid_from") ? { valid_from: optionalDate(args, "valid_from") } : {}),
+        ...(optionalDate(args, "valid_until") ? { valid_until: optionalDate(args, "valid_until") } : {}),
         source: "mcp",
         // Relayed by an agent: consolidation may still revise it, unlike what the user states on the CLI.
         origin: "saved",

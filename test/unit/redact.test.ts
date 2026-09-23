@@ -51,20 +51,30 @@ describe("redact, edge cases", () => {
     ['password: "correct horse battery staple"', 'password: "[redacted:assignment]"'],
     ["PGPASSWORD=p@ss;word123", "PGPASSWORD=[redacted:assignment]"],
     ["redis://:s3cretpassw0rd@cache:6379", "redis://:[redacted:url-credentials]@cache:6379"],
-    ["postgres://app:ab/cd#ef@db/x", "postgres://app:[redacted:url-credentials]@db/x"],
+    ["postgres://app:ab#cd%2Fef@db/x", "postgres://app:[redacted:url-credentials]@db/x"],
+    ['"accessToken": "ya29.a0AfH6SMBx"', '"accessToken": "[redacted:assignment]"'],
+    ['"clientSecret": "GOCSPX-abcdef"', '"clientSecret": "[redacted:assignment]"'],
+    ["authToken=abcdef123456", "authToken=[redacted:assignment]"],
+    ["SECRETKEY=abcdef123456", "SECRETKEY=[redacted:assignment]"],
+    ["api-key: abcdef123456", "api-key: [redacted:assignment]"],
     ["curl -u admin:SuperSecret123 https://x", "curl -u admin:[redacted:basic-auth] https://x"],
   ])("masks %s", (input, expected) => {
     expect(redact(input).text).toBe(expected);
   });
 
   it("leaves words that merely contain a keyword alone", () => {
-    for (const text of ["tokenizer: sentencepiece_model_v2", "max_tokens: 4096000", "secretary=someone"]) {
+    for (const text of [
+      "tokenizer: sentencepiece_model_v2",
+      "max_tokens: 4096000",
+      "secretary=someone",
+      "https://registry.npmjs.org:443/@scope/pkg",
+    ]) {
       expect(redact(text).text).toBe(text);
     }
   });
 
   it("stays fast on large pastes of identifier-like text", () => {
-    const big = "token_token_token ".repeat(20_000) + "x_".repeat(100_000);
+    const big = "token_token_token ".repeat(20_000) + "x_".repeat(100_000) + "a-".repeat(160_000) + "a.".repeat(40_000);
     const started = Date.now();
     redact(big);
     expect(Date.now() - started).toBeLessThan(1500);

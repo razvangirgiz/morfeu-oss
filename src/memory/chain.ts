@@ -25,19 +25,22 @@ export async function requireMemory(db: Db, id: string, options: { lock?: boolea
 }
 
 /**
- * Follows superseded_by links from any row of a chain to its current, active
- * head. Returns null when the chain ends in an expired or invalidated row.
+ * The current head of the chain `start` belongs to: follows superseded_by
+ * links to the newest claim that is still part of history, including a
+ * successor announced for a future date. Returns null when the chain ends in
+ * an expired or retracted claim, or in a forgotten one with nothing before it.
  * Rows are locked on the way when the caller is about to change the head.
  */
 export async function activeHead(db: Db, start: Memory, options: { lock?: boolean } = {}): Promise<Memory | null> {
-  let current: Memory | null = start;
-  const seen = new Set<string>();
-  while (current && current.status !== "active" && current.superseded_by_id && !seen.has(current.id)) {
-    if (seen.size >= MAX_HOPS) break;
-    seen.add(current.id);
-    current = await loadMemory(db, current.superseded_by_id, options);
+  let current: Memory = start;
+  const seen = new Set<string>([start.id]);
+  while (current.superseded_by_id && !seen.has(current.superseded_by_id) && seen.size < MAX_HOPS) {
+    const next = await loadMemory(db, current.superseded_by_id, options);
+    if (!next || next.status === "invalidated") break;
+    seen.add(next.id);
+    current = next;
   }
-  return current?.status === "active" ? current : null;
+  return current.status === "active" ? current : null;
 }
 
 /** The chain around a memory, oldest first: its predecessors, itself, and its successors. */

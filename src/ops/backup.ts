@@ -30,8 +30,8 @@ export async function backupDatabase(
         ]
       : ["pg_dump", ["--dbname", config.databaseUrl, "-Fc"]];
   const out = createWriteStream(path, { mode: 0o600 });
+  const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
   try {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
@@ -45,6 +45,7 @@ export async function backupDatabase(
     const [code] = await Promise.all([exit, finished(out)]);
     if (code !== 0) throw new Error(`backup failed (${command} exited with ${code}): ${stderr.trim()}`);
   } catch (err) {
+    child.kill();
     out.destroy();
     rmSync(path, { force: true });
     throw err;

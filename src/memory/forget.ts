@@ -1,5 +1,5 @@
 import type { App } from "../app.js";
-import { withTx } from "../db/client.js";
+import { type Db, withTx } from "../db/client.js";
 import { requireMemory } from "./chain.js";
 
 export type ForgetResult = { id: string; already: boolean };
@@ -25,12 +25,30 @@ export async function forgetMemory(app: App, memoryId: string, reason: string, n
       "UPDATE memories SET status = 'invalidated', retracted_at = $2, pinned_at = NULL WHERE id = $1",
       [memory.id, now],
     );
+    await reopenPredecessor(client, memory.id, memory.supersedes_id, memory.valid_from);
     await client.query(
       `INSERT INTO runs (kind, started_at, finished_at, status, stats) VALUES ('forget', $1, $1, 'done', $2::jsonb)`,
       [now, JSON.stringify({ memory_id: memory.id, reason: reason.trim() })],
     );
     return { id: memory.id, already: false };
   });
+}
+
+/**
+ * When the forgotten memory had taken over from another one that is still
+ * history (not retracted), that one is the latest claim again: it gets back
+ * the open end it lost and, if it was ended by this memory, its active status.
+ */
+async function reopenPredecessor(db: Db, forgottenId: string, predecessorId: string | null, cut: Date | null) {
+  if (!predecessorId) return;
+  await db.query(
+    `UPDATE memories
+     SET superseded_by_id = NULL,
+         valid_until = CASE WHEN valid_until IS NOT DISTINCT FROM $3 THEN NULL ELSE valid_until END,
+         status = CASE WHEN status = 'superseded' AND valid_until IS NOT DISTINCT FROM $3 THEN 'active' ELSE status END
+     WHERE id = $1 AND superseded_by_id = $2 AND retracted_at IS NULL AND status IN ('active', 'superseded')`,
+    [predecessorId, forgottenId, cut],
+  );
 }
 
 export function isForgotten(memory: { status: string; retracted_at: Date | null }): boolean {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Memory } from "../../src/core/types.js";
 import { dream } from "../../src/dream/dream.js";
 import type { DreamDecision } from "../../src/dream/schema.js";
+import { correctTool } from "../../src/mcp/tools/write.js";
 import { requireMemory } from "../../src/memory/chain.js";
 import { correctMemory } from "../../src/memory/correct.js";
 import { explainMemory } from "../../src/memory/explain.js";
@@ -189,6 +190,139 @@ describe("bitemporal invariants", () => {
     await dream(app, { now: days(22) });
     expect((await requireMemory(app.pool, late.id)).retracted_at).toEqual(days(22));
     expect(await servedAt(days(25))).toEqual(["Alex plays go"]);
+    await assertNoOverlap();
+  });
+});
+
+describe("pending successors", () => {
+  it("a change made while another is announced for later extends the chain instead of forking it", async () => {
+    const paris = await saveMemory(app, { content: "Alex lives in Paris", type: "fact", scope: me }, days(0));
+    await saveMemory(
+      app,
+      { content: "Alex lives in Berlin", type: "fact", scope: me, supersedes: paris.memory.id, valid_from: days(40) },
+      days(10),
+    );
+    // Paris is still the present claim and the natural thing to point at.
+    await saveMemory(
+      app,
+      { content: "Alex lives in Rome", type: "fact", scope: me, supersedes: paris.memory.id },
+      days(20),
+    );
+    expect(await servedAt(days(50), false)).toEqual(["Alex lives in Rome"]);
+    expect(await servedAt(days(15))).toEqual(["Alex lives in Paris"]);
+    await assertNoOverlap();
+  });
+
+  it("a dream supersede aimed at the older claim goes to the pending head", async () => {
+    const paris = await insertMemory(
+      app,
+      app.pool,
+      {
+        content: "Alex lives in Paris",
+        type: "fact",
+        scope: me,
+        origin: "extracted",
+        status: "active",
+        entities: alex,
+      },
+      days(0),
+    );
+    await saveMemory(
+      app,
+      {
+        content: "Alex lives in Berlin",
+        type: "fact",
+        scope: me,
+        supersedes: paris.id,
+        valid_from: days(40),
+        entities: alex,
+      },
+      days(10),
+    );
+    await candidate("Alex lives in Rome", days(20));
+    decide({ action: "supersede", target_id: paris.id });
+    await dream(app, { now: days(21) });
+    expect(await servedAt(days(50), false)).toEqual(["Alex lives in Rome"]);
+    await assertNoOverlap();
+  });
+
+  it("forgetting a pending or latest successor gives the present back to the claim before it", async () => {
+    const paris = await saveMemory(app, { content: "Alex lives in Paris", type: "fact", scope: me }, days(0));
+    const berlin = await saveMemory(
+      app,
+      { content: "Alex lives in Berlin", type: "fact", scope: me, supersedes: paris.memory.id, valid_from: days(40) },
+      days(10),
+    );
+    await forgetMemory(app, berlin.memory.id, "never happened", days(20));
+    expect(await servedAt(days(50), false)).toEqual(["Alex lives in Paris"]);
+    await assertNoOverlap();
+  });
+});
+
+describe("dates from agents and models", () => {
+  it("a correction with null dates keeps the corrected claim's period", async () => {
+    const paris = await saveMemory(app, { content: "Alex lives in Paris", type: "fact", scope: me }, days(0));
+    const london = await saveMemory(
+      app,
+      { content: "Alex lives in London", type: "fact", scope: me, supersedes: paris.memory.id },
+      days(20),
+    );
+    await correctTool.run(
+      app,
+      { memory_id: london.memory.id, content: "Alex lives in Leeds", valid_from: null },
+      days(30),
+    );
+    expect(await servedAt(days(10))).toEqual(["Alex lives in Paris"]);
+    expect(await servedAt(days(25))).toEqual(["Alex lives in Leeds"]);
+  });
+
+  it("an agent cannot correct what the user stated", async () => {
+    const stated = await saveMemory(
+      app,
+      { content: "Alex is vegetarian", type: "fact", scope: me, origin: "owner" },
+      days(0),
+    );
+    await expect(
+      correctTool.run(app, { memory_id: stated.memory.id, content: "Alex eats fish" }, days(1)),
+    ).rejects.toThrow(/stated by the user/);
+  });
+
+  it("a rewrite dated before its target cannot erase the target's history", async () => {
+    const paris = await insertMemory(
+      app,
+      app.pool,
+      {
+        content: "Alex lives in Paris",
+        type: "fact",
+        scope: me,
+        origin: "extracted",
+        status: "active",
+        valid_from: days(0),
+        entities: alex,
+      },
+      days(0),
+    );
+    const berlin = await saveMemory(
+      app,
+      {
+        content: "Alex lives in Berlin",
+        type: "fact",
+        scope: me,
+        supersedes: paris.id,
+        valid_from: days(20),
+        entities: alex,
+      },
+      days(20),
+    );
+    await candidate("Alex moved to Berlin", days(30));
+    decide({
+      action: "temporal_update",
+      target_id: berlin.memory.id,
+      content: "Alex has lived in Berlin since March",
+      valid_from: days(-100).toISOString(),
+    });
+    await dream(app, { now: days(31) });
+    expect(await servedAt(days(10))).toEqual(["Alex lives in Paris"]);
     await assertNoOverlap();
   });
 });

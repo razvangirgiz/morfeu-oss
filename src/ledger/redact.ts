@@ -23,9 +23,9 @@ const PATTERNS: readonly Pattern[] = [
   { kind: "huggingface", regex: /\bhf_[A-Za-z0-9]{30,}\b/g },
   { kind: "jwt", regex: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
   {
-    // scheme://user:password@host, also with an empty user or a password containing / or #
+    // scheme://user:password@host, also with an empty user; "host:443/@scope" is a port and a path, not a password
     kind: "url-credentials",
-    regex: /\b([a-z][a-z0-9+.-]*:\/\/[^:/?#\s@]*):([^@\s]{1,256})@/gi,
+    regex: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^:/?#\s@]{0,128}):([^@\s/]{1,256})@/gi,
     replace: (_m, prefix) => `${prefix}:[redacted:url-credentials]@`,
   },
   {
@@ -45,20 +45,46 @@ const PATTERNS: readonly Pattern[] = [
     regex:
       /\b([A-Za-z0-9_-]{0,40}(?:api[_-]?key|secret|token|passw(?:or)?d|passphrase|credentials?|pwd)[A-Za-z0-9_-]{0,20})(["']?\s*[:=]\s*)(?:"([^"\n]{6,256})"|'([^'\n]{6,256})'|([^\s"',]{6,256}))/gi,
     replace: (match, key, separator, doubleQuoted, singleQuoted) => {
-      // "tokenizer", "tokens", "secretary": the keyword must stand as its own word inside the name.
-      if (
-        !/(?:^|[_-])(?:api[_-]?key|secret|token|passw(?:or)?d|passphrase|credentials?|pwd)(?:$|[_-])|apikey|password/i.test(
-          key,
-        )
-      ) {
-        return match;
-      }
+      if (!isSecretName(key)) return match;
       if (doubleQuoted !== undefined) return `${key}${separator}"[redacted:assignment]"`;
       if (singleQuoted !== undefined) return `${key}${separator}'[redacted:assignment]'`;
       return `${key}${separator}[redacted:assignment]`;
     },
   },
 ];
+
+const SECRET_WORDS = new Set([
+  "secret",
+  "token",
+  "password",
+  "passwd",
+  "pwd",
+  "passphrase",
+  "credential",
+  "credentials",
+  "apikey",
+  "secretkey",
+]);
+
+/**
+ * Whether a name like DB_PASSWORD, clientSecret or api-key names a secret.
+ * The keyword must be a word of its own, or end a run-together name:
+ * "tokenizer", "max_tokens" and "secretary" are not secrets.
+ */
+function isSecretName(name: string): boolean {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .split(/[_-]+/)
+    .filter(Boolean);
+  return words.some(
+    (w, i) =>
+      SECRET_WORDS.has(w) ||
+      (w === "api" && words[i + 1] === "key") ||
+      // All-caps names run words together: PGPASSWORD, AWSSECRET, MYAPIKEY.
+      /(password|passwd|secret|apikey)$/.test(w),
+  );
+}
 
 export type Redacted = { text: string; count: number };
 

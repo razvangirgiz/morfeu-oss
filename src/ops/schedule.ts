@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import { platformDirs } from "../config/paths.js";
 
 /**
@@ -65,7 +65,7 @@ Description=morfeu: ingest, extract and consolidate memories
 
 [Service]
 Type=oneshot
-Environment="PATH=${path}"
+Environment="PATH=${path.replaceAll("%", "%%")}"
 ExecStart=${systemdQuote(s.nodePath)} ${systemdQuote(s.cliPath)} run
 `,
       },
@@ -142,7 +142,11 @@ export function scheduleInstalled(s: Schedule): boolean {
  */
 function jobPath(s: Schedule): string {
   const extra = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
-  const parts = [...(s.path ?? process.env.PATH ?? "").split(":"), ...extra].filter(Boolean);
+  // Only absolute, lasting directories: not ".", not a package runner's temporary bin.
+  const temporary = tmpdir();
+  const parts = [...(s.path ?? process.env.PATH ?? "").split(":"), ...extra].filter(
+    (p) => isAbsolute(p) && !p.startsWith(temporary) && !/[\\/](_npx|dlx-[^/]*|\.pnpm-store)[\\/]/.test(p),
+  );
   return [...new Set(parts)].join(":");
 }
 

@@ -67,11 +67,12 @@ async function supersede(ctx: DecisionContext): Promise<DreamAction> {
   const { target, note } = await resolveTarget(ctx);
   if (!target) return add(ctx, note);
   const { candidate, client, now } = ctx;
-  // The new claim starts when it was said, unless it says otherwise.
+  // The new claim starts when it was said, unless it says otherwise, and never
+  // before the claim it replaces: dates from a model must not rewrite history.
   const res = await client.query(
-    `UPDATE memories SET status = 'active', supersedes_id = $2, valid_from = COALESCE(valid_from, $3)
+    `UPDATE memories SET status = 'active', supersedes_id = $2, valid_from = $3
      WHERE id = $1 AND status = 'candidate' RETURNING ${MEMORY_COLUMNS}`,
-    [candidate.id, target.id, candidate.observed_at],
+    [candidate.id, target.id, notBefore(candidate.valid_from ?? candidate.observed_at, target.valid_from)],
   );
   await settleChain(client, mapMemory(res.rows[0]), now);
   await record(ctx, "supersede", target.id);
@@ -83,7 +84,8 @@ async function temporalUpdate(ctx: DecisionContext): Promise<DreamAction> {
   const resolved = ctx.decision.target_id ? await resolveTarget(ctx) : { target: null };
   if (ctx.decision.target_id && !resolved.target) return add(ctx, resolved.note);
   const target = resolved.target;
-  const validFrom = parseDate(decision.valid_from) ?? candidate.valid_from ?? candidate.observed_at;
+  const stated = parseDate(decision.valid_from) ?? candidate.valid_from ?? candidate.observed_at;
+  const validFrom = target ? notBefore(stated, target.valid_from) : stated;
   let validUntil = parseDate(decision.valid_until) ?? candidate.valid_until;
   if (validUntil && validUntil < validFrom) validUntil = null;
   const rewritten = await insertMemory(
@@ -181,6 +183,10 @@ async function record(
     "INSERT INTO dream_decisions (run_id, memory_id, action, target_id, reason) VALUES ($1, $2, $3, $4, $5)",
     [ctx.runId, ctx.candidate.id, action, targetId, note ? `${reason} (${note})` : reason],
   );
+}
+
+function notBefore(date: Date, floor: Date | null): Date {
+  return floor && date < floor ? floor : date;
 }
 
 function parseDate(value: string | null | undefined): Date | null {

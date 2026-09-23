@@ -37,6 +37,11 @@ export async function correctMemory(app: App, input: CorrectInput, now: Date): P
     const start = await requireMemory(client, input.memoryId, { lock: true });
     const head = await activeHead(client, start, { lock: true });
     if (!head) throw new Error(`memory ${input.memoryId} is no longer active; nothing to correct`);
+    if (head.origin === "owner" && input.origin === "saved") {
+      throw new Error(
+        `memory ${head.id} was stated by the user; they can change it with \`morfeu correct ${head.id} "<new text>"\``,
+      );
+    }
     const memory = await insertMemory(
       app,
       client,
