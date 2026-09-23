@@ -2,7 +2,7 @@ import type { App } from "../app.js";
 import type { Memory } from "../core/types.js";
 import { withTx } from "../db/client.js";
 import { redact } from "../ledger/redact.js";
-import { activeHead, requireMemory } from "./chain.js";
+import { activeHead, handOverSuccessor, requireMemory } from "./chain.js";
 import { entitiesOf } from "./entities.js";
 import { validateContent } from "./save.js";
 import { settleChain } from "./validity.js";
@@ -35,7 +35,8 @@ export async function correctMemory(app: App, input: CorrectInput, now: Date): P
   validateContent(content);
   return withTx(app.pool, async (client) => {
     const start = await requireMemory(client, input.memoryId, { lock: true });
-    const head = await activeHead(client, start, { lock: true });
+    // The claim served now, not a successor announced for later.
+    const head = await activeHead(client, start, { lock: true, servedAt: now });
     if (!head) throw new Error(`memory ${input.memoryId} is no longer active; nothing to correct`);
     if (head.origin === "owner" && input.origin === "saved") {
       throw new Error(
@@ -69,6 +70,8 @@ export async function correctMemory(app: App, input: CorrectInput, now: Date): P
        WHERE id = $1`,
       [head.id, memory.id, now],
     );
+    // A successor already announced for the wrong claim now follows the correction.
+    await handOverSuccessor(client, head, memory);
     // A correction reaching further back than the wrong claim also overrides what came before it.
     await settleChain(client, memory, now);
     if (head.pinned_at)

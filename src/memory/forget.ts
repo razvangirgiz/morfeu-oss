@@ -1,4 +1,5 @@
 import type { App } from "../app.js";
+import type { Memory } from "../core/types.js";
 import { type Db, withTx } from "../db/client.js";
 import { requireMemory } from "./chain.js";
 
@@ -25,7 +26,7 @@ export async function forgetMemory(app: App, memoryId: string, reason: string, n
       "UPDATE memories SET status = 'invalidated', retracted_at = $2, pinned_at = NULL WHERE id = $1",
       [memory.id, now],
     );
-    await reopenPredecessor(client, memory.id, memory.supersedes_id, memory.valid_from);
+    await closeGap(client, memory);
     await client.query(
       `INSERT INTO runs (kind, started_at, finished_at, status, stats) VALUES ('forget', $1, $1, 'done', $2::jsonb)`,
       [now, JSON.stringify({ memory_id: memory.id, reason: reason.trim() })],
@@ -35,19 +36,37 @@ export async function forgetMemory(app: App, memoryId: string, reason: string, n
 }
 
 /**
- * When the forgotten memory had taken over from another one that is still
- * history (not retracted), that one is the latest claim again: it gets back
- * the open end it lost and, if it was ended by this memory, its active status.
+ * Keeps the chain whole around a forgotten memory. In the middle of a chain,
+ * its neighbours are linked to each other (the forgotten claim's period
+ * simply becomes unknown). At the head, the claim it had replaced is the
+ * latest again and gets back the open end it lost to it.
  */
-async function reopenPredecessor(db: Db, forgottenId: string, predecessorId: string | null, cut: Date | null) {
-  if (!predecessorId) return;
+async function closeGap(db: Db, forgotten: Memory): Promise<void> {
+  const before = forgotten.supersedes_id;
+  const after = forgotten.superseded_by_id;
+  if (after) {
+    await db.query("UPDATE memories SET supersedes_id = $2 WHERE id = $1 AND supersedes_id = $3", [
+      after,
+      before,
+      forgotten.id,
+    ]);
+    if (before) {
+      await db.query("UPDATE memories SET superseded_by_id = $2 WHERE id = $1 AND superseded_by_id = $3", [
+        before,
+        after,
+        forgotten.id,
+      ]);
+    }
+    return;
+  }
+  if (!before || forgotten.retracted_at) return;
   await db.query(
     `UPDATE memories
      SET superseded_by_id = NULL,
          valid_until = CASE WHEN valid_until IS NOT DISTINCT FROM $3 THEN NULL ELSE valid_until END,
          status = CASE WHEN status = 'superseded' AND valid_until IS NOT DISTINCT FROM $3 THEN 'active' ELSE status END
      WHERE id = $1 AND superseded_by_id = $2 AND retracted_at IS NULL AND status IN ('active', 'superseded')`,
-    [predecessorId, forgottenId, cut],
+    [before, forgotten.id, forgotten.valid_from],
   );
 }
 

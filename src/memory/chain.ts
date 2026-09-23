@@ -25,22 +25,47 @@ export async function requireMemory(db: Db, id: string, options: { lock?: boolea
 }
 
 /**
- * The current head of the chain `start` belongs to: follows superseded_by
- * links to the newest claim that is still part of history, including a
- * successor announced for a future date. Returns null when the chain ends in
- * an expired or retracted claim, or in a forgotten one with nothing before it.
- * Rows are locked on the way when the caller is about to change the head.
+ * The head of the chain `start` belongs to, following superseded_by links.
+ *
+ * Without `servedAt`, this is the newest claim, including a successor
+ * announced for a future date: what a new change must replace. With
+ * `servedAt`, it stops at the claim served at that time: what a correction,
+ * an expiry or a pin is about. Returns null when that claim is not active
+ * (the chain ended in an expired or retracted claim).
  */
-export async function activeHead(db: Db, start: Memory, options: { lock?: boolean } = {}): Promise<Memory | null> {
+export async function activeHead(
+  db: Db,
+  start: Memory,
+  options: { lock?: boolean; servedAt?: Date } = {},
+): Promise<Memory | null> {
   let current: Memory = start;
   const seen = new Set<string>([start.id]);
   while (current.superseded_by_id && !seen.has(current.superseded_by_id) && seen.size < MAX_HOPS) {
     const next = await loadMemory(db, current.superseded_by_id, options);
     if (!next || next.status === "invalidated") break;
+    if (options.servedAt && current.status === "active" && next.valid_from && next.valid_from > options.servedAt) break;
     seen.add(next.id);
     current = next;
   }
   return current.status === "active" ? current : null;
+}
+
+/**
+ * When `replacement` takes the place of `old` (a correction, a rewrite), a
+ * successor already announced for `old` now follows the replacement instead,
+ * and the replacement ends where that successor begins.
+ */
+export async function handOverSuccessor(db: Db, old: Memory, replacement: Memory): Promise<void> {
+  if (!old.superseded_by_id || old.superseded_by_id === replacement.id) return;
+  const next = await loadMemory(db, old.superseded_by_id, { lock: true });
+  if (!next || next.status === "invalidated" || next.retracted_at) return;
+  await db.query("UPDATE memories SET supersedes_id = $2 WHERE id = $1", [next.id, replacement.id]);
+  await db.query(
+    `UPDATE memories SET superseded_by_id = $2,
+       valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until ELSE LEAST(COALESCE(valid_until, $3), $3) END
+     WHERE id = $1`,
+    [replacement.id, next.id, next.valid_from],
+  );
 }
 
 /** The chain around a memory, oldest first: its predecessors, itself, and its successors. */

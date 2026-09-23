@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { platformDirs } from "../config/paths.js";
@@ -143,11 +143,20 @@ export function scheduleInstalled(s: Schedule): boolean {
 function jobPath(s: Schedule): string {
   const extra = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   // Only absolute, lasting directories: not ".", not a package runner's temporary bin.
-  const temporary = tmpdir();
+  const temporary = [tmpdir(), realpathOr(tmpdir())];
   const parts = [...(s.path ?? process.env.PATH ?? "").split(":"), ...extra].filter(
-    (p) => isAbsolute(p) && !p.startsWith(temporary) && !/[\\/](_npx|dlx-[^/]*|\.pnpm-store)[\\/]/.test(p),
+    (p) =>
+      isAbsolute(p) && !temporary.some((t) => p.startsWith(t)) && !/[\\/](_npx|dlx-[^/]*|\.pnpm-store)[\\/]/.test(p),
   );
   return [...new Set(parts)].join(":");
+}
+
+function realpathOr(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 function xml(value: string): string {

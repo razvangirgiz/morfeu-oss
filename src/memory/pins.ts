@@ -31,7 +31,10 @@ export async function listPinned(db: Db, now: Date, scopes?: readonly Scope[]): 
 export async function pinMemory(app: App, memoryId: string, now: Date): Promise<Memory> {
   return withTx(app.pool, async (client) => {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('morfeu-pins'))");
-    const head = await activeHead(client, await requireMemory(client, memoryId, { lock: true }), { lock: true });
+    const head = await activeHead(client, await requireMemory(client, memoryId, { lock: true }), {
+      lock: true,
+      servedAt: now,
+    });
     if (!head) throw new Error(`memory ${memoryId} is not active; only active memories can be pinned`);
     if (head.pinned_at) return head;
     const pinned = await listPinned(client, now);

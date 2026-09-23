@@ -8,6 +8,7 @@ import { correctMemory } from "../../src/memory/correct.js";
 import { explainMemory } from "../../src/memory/explain.js";
 import { exportMarkdown } from "../../src/memory/export.js";
 import { forgetMemory } from "../../src/memory/forget.js";
+import { pinMemory } from "../../src/memory/pins.js";
 import { MEMORY_COLUMNS, mapMemory } from "../../src/memory/row.js";
 import { saveMemory } from "../../src/memory/save.js";
 import { servingSql } from "../../src/memory/serving.js";
@@ -255,6 +256,98 @@ describe("pending successors", () => {
     );
     await forgetMemory(app, berlin.memory.id, "never happened", days(20));
     expect(await servedAt(days(50), false)).toEqual(["Alex lives in Paris"]);
+    await assertNoOverlap();
+  });
+});
+
+describe("served head versus announced successor", () => {
+  async function parisThenBerlinAt40() {
+    const paris = await saveMemory(
+      app,
+      { content: "Alex lives in Paris", type: "fact", scope: me, entities: alex },
+      days(0),
+    );
+    const berlin = await saveMemory(
+      app,
+      {
+        content: "Alex lives in Berlin",
+        type: "fact",
+        scope: me,
+        supersedes: paris.memory.id,
+        valid_from: days(40),
+        entities: alex,
+      },
+      days(10),
+    );
+    return { paris: paris.memory, berlin: berlin.memory };
+  }
+
+  it("a correction fixes the claim served now and keeps the announced move", async () => {
+    const { paris } = await parisThenBerlinAt40();
+    await correctMemory(app, { memoryId: paris.id, content: "Alex lives in Lyon" }, days(20));
+    expect(await servedAt(days(30), false)).toEqual(["Alex lives in Lyon"]);
+    expect(await servedAt(days(5))).toEqual(["Alex lives in Lyon"]);
+    expect(await servedAt(days(50))).toEqual(["Alex lives in Berlin"]);
+    await assertNoOverlap();
+  });
+
+  it("an expiry from the dream ends the claim served now, not the announced one", async () => {
+    const { paris } = await parisThenBerlinAt40();
+    await candidate("Alex left Paris", days(25));
+    decide({ action: "expire", target_id: paris.id, valid_until: days(24).toISOString() });
+    await dream(app, { now: days(26) });
+    expect(await servedAt(days(30))).toEqual([]);
+    expect(await servedAt(days(50))).toEqual(["Alex lives in Berlin"]);
+    await assertNoOverlap();
+  });
+
+  it("pins the claim served now", async () => {
+    const { paris } = await parisThenBerlinAt40();
+    const pinned = await pinMemory(app, paris.id, days(20));
+    expect(pinned.content).toBe("Alex lives in Paris");
+  });
+
+  it("a change the dream sees before an announced one starts when it was said", async () => {
+    const { paris } = await parisThenBerlinAt40();
+    await candidate("Alex moved to Rome", days(20));
+    decide({ action: "supersede", target_id: paris.id });
+    await dream(app, { now: days(21) });
+    expect(await servedAt(days(25), false)).toEqual(["Alex moved to Rome"]);
+    expect(await servedAt(days(50))).toEqual(["Alex moved to Rome"]);
+    await assertNoOverlap();
+  });
+});
+
+describe("forget inside a chain", () => {
+  it("forgetting a middle claim links its neighbours and never revives an old one", async () => {
+    const fiat = await saveMemory(app, { content: "Alex drives a Fiat", type: "fact", scope: me }, days(0));
+    const ford = await saveMemory(
+      app,
+      { content: "Alex drives a Ford", type: "fact", scope: me, supersedes: fiat.memory.id },
+      days(10),
+    );
+    const tesla = await saveMemory(
+      app,
+      { content: "Alex drives a Tesla", type: "fact", scope: me, supersedes: ford.memory.id },
+      days(20),
+    );
+    await forgetMemory(app, ford.memory.id, "private", days(25));
+    expect(await servedAt(days(30), false)).toEqual(["Alex drives a Tesla"]);
+    expect(await servedAt(days(15))).toEqual([]);
+    expect((await requireMemory(app.pool, tesla.memory.id)).supersedes_id).toBe(fiat.memory.id);
+    await assertNoOverlap();
+  });
+
+  it("forgetting a corrected claim leaves the correction in place", async () => {
+    const cat = await saveMemory(app, { content: "Alex has a cat", type: "fact", scope: me }, days(0));
+    const dog = await saveMemory(
+      app,
+      { content: "Alex has a dog", type: "fact", scope: me, supersedes: cat.memory.id },
+      days(10),
+    );
+    await correctMemory(app, { memoryId: dog.memory.id, content: "Alex has a parrot" }, days(15));
+    await forgetMemory(app, dog.memory.id, "private", days(20));
+    expect(await servedAt(days(30), false)).toEqual(["Alex has a parrot"]);
     await assertNoOverlap();
   });
 });

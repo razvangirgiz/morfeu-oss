@@ -1,7 +1,7 @@
 import type { App } from "../app.js";
 import type { DreamAction, Memory } from "../core/types.js";
 import type { PoolClient } from "../db/client.js";
-import { activeHead, isUuid, loadMemory } from "../memory/chain.js";
+import { activeHead, handOverSuccessor, isUuid, loadMemory } from "../memory/chain.js";
 import { entitiesOf } from "../memory/entities.js";
 import { MEMORY_COLUMNS, mapMemory } from "../memory/row.js";
 import { clampEnd } from "../memory/save.js";
@@ -64,15 +64,19 @@ async function duplicate(ctx: DecisionContext): Promise<DreamAction> {
 }
 
 async function supersede(ctx: DecisionContext): Promise<DreamAction> {
-  const { target, note } = await resolveTarget(ctx);
+  // A change replaces the newest claim, including one announced for later.
+  const { target, note } = await resolveTarget(ctx, "newest");
   if (!target) return add(ctx, note);
   const { candidate, client, now } = ctx;
+  // Dates may not reach before the claim served now (a pending successor's
+  // future start is no floor: the change can happen before it).
+  const served = (await resolveTarget(ctx, "served")).target ?? target;
   // The new claim starts when it was said, unless it says otherwise, and never
   // before the claim it replaces: dates from a model must not rewrite history.
   const res = await client.query(
     `UPDATE memories SET status = 'active', supersedes_id = $2, valid_from = $3
      WHERE id = $1 AND status = 'candidate' RETURNING ${MEMORY_COLUMNS}`,
-    [candidate.id, target.id, notBefore(candidate.valid_from ?? candidate.observed_at, target.valid_from)],
+    [candidate.id, target.id, notBefore(candidate.valid_from ?? candidate.observed_at, served.valid_from)],
   );
   await settleChain(client, mapMemory(res.rows[0]), now);
   await record(ctx, "supersede", target.id);
@@ -114,7 +118,10 @@ async function temporalUpdate(ctx: DecisionContext): Promise<DreamAction> {
     candidate.id,
     rewritten.id,
   ]);
-  if (target) await settleChain(client, rewritten, now);
+  if (target) {
+    await handOverSuccessor(client, target, rewritten);
+    await settleChain(client, rewritten, now);
+  }
   await record(ctx, "temporal_update", rewritten.id);
   return "temporal_update";
 }
@@ -152,20 +159,26 @@ async function expire(ctx: DecisionContext): Promise<DreamAction> {
  * the candidate's own scope, through the chain's current head, and never a
  * memory the user stated themselves. Anything else degrades to "add".
  */
-async function resolveTarget(ctx: DecisionContext): Promise<{ target: Memory | null; note?: string }> {
+async function resolveTarget(
+  ctx: DecisionContext,
+  head: "served" | "newest" = "served",
+): Promise<{ target: Memory | null; note?: string }> {
   const id = ctx.decision.target_id;
   if (!id) return { target: null, note: "no target given" };
   if (!isUuid(id) || !ctx.allowed.has(id))
     return { target: null, note: `target ${id.slice(0, 40)} was not in the neighborhood` };
   const start = await loadMemory(ctx.client, id, { lock: true });
-  const head = start ? await activeHead(ctx.client, start, { lock: true }) : null;
-  if (!head) return { target: null, note: `target ${id} is no longer active` };
-  if (head.id === ctx.candidate.id) return { target: null, note: "target is the candidate itself" };
-  if (head.scope_type !== ctx.candidate.scope_type || head.scope_id !== ctx.candidate.scope_id) {
-    return { target: null, note: `target ${head.id} is in another scope` };
+  const found = start
+    ? await activeHead(ctx.client, start, { lock: true, servedAt: head === "served" ? ctx.now : undefined })
+    : null;
+  if (!found) return { target: null, note: `target ${id} is no longer active` };
+  const resolved = found;
+  if (resolved.id === ctx.candidate.id) return { target: null, note: "target is the candidate itself" };
+  if (resolved.scope_type !== ctx.candidate.scope_type || resolved.scope_id !== ctx.candidate.scope_id) {
+    return { target: null, note: `target ${resolved.id} is in another scope` };
   }
-  if (head.origin === "owner") return { target: null, note: `target ${head.id} was stated by the user` };
-  return { target: head };
+  if (resolved.origin === "owner") return { target: null, note: `target ${resolved.id} was stated by the user` };
+  return { target: resolved };
 }
 
 async function setStatus(ctx: DecisionContext, id: string, status: "active" | "invalidated"): Promise<void> {

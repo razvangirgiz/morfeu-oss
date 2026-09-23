@@ -52,6 +52,7 @@ describe("redact, edge cases", () => {
     ["PGPASSWORD=p@ss;word123", "PGPASSWORD=[redacted:assignment]"],
     ["redis://:s3cretpassw0rd@cache:6379", "redis://:[redacted:url-credentials]@cache:6379"],
     ["postgres://app:ab#cd%2Fef@db/x", "postgres://app:[redacted:url-credentials]@db/x"],
+    ["postgres://app:ab/cd#ef@db/x", "postgres://app:[redacted:url-credentials]@db/x"],
     ['"accessToken": "ya29.a0AfH6SMBx"', '"accessToken": "[redacted:assignment]"'],
     ['"clientSecret": "GOCSPX-abcdef"', '"clientSecret": "[redacted:assignment]"'],
     ["authToken=abcdef123456", "authToken=[redacted:assignment]"],

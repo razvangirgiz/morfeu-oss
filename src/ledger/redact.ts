@@ -23,9 +23,10 @@ const PATTERNS: readonly Pattern[] = [
   { kind: "huggingface", regex: /\bhf_[A-Za-z0-9]{30,}\b/g },
   { kind: "jwt", regex: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
   {
-    // scheme://user:password@host, also with an empty user; "host:443/@scope" is a port and a path, not a password
+    // scheme://user:password@host, also with an empty user or a / in the password;
+    // "host:443/@scope" is a port and a path, not a password
     kind: "url-credentials",
-    regex: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^:/?#\s@]{0,128}):([^@\s/]{1,256})@/gi,
+    regex: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^:/?#\s@]{0,128}):(?!\d{1,5}\/)([^@\s]{1,256})@/gi,
     replace: (_m, prefix) => `${prefix}:[redacted:url-credentials]@`,
   },
   {
