@@ -5,6 +5,7 @@ import { redact } from "../ledger/redact.js";
 import { activeHead, requireMemory } from "./chain.js";
 import { entitiesOf } from "./entities.js";
 import { validateContent } from "./save.js";
+import { settleChain } from "./validity.js";
 import { insertMemory, sourcesOf } from "./write.js";
 
 export type CorrectInput = {
@@ -15,6 +16,8 @@ export type CorrectInput = {
   valid_until?: Date | null;
   importance?: number;
   source?: string;
+  /** "owner" when the user corrects it themselves (CLI); "saved" when an agent relays it (MCP). */
+  origin?: "owner" | "saved";
 };
 
 export type CorrectResult = { memory: Memory; retracted_id: string };
@@ -41,10 +44,10 @@ export async function correctMemory(app: App, input: CorrectInput, now: Date): P
         content,
         type: head.type,
         scope: { type: head.scope_type, id: head.scope_id },
-        origin: "owner",
+        origin: input.origin ?? "owner",
         status: "active",
         importance: input.importance ?? head.importance,
-        confidence: 1,
+        confidence: input.origin === "saved" ? 0.9 : 1,
         volatility: head.volatility,
         attrs: { ...head.attrs, corrects: head.id },
         observed_at: now,
@@ -61,6 +64,8 @@ export async function correctMemory(app: App, input: CorrectInput, now: Date): P
        WHERE id = $1`,
       [head.id, memory.id, now],
     );
+    // A correction reaching further back than the wrong claim also overrides what came before it.
+    await settleChain(client, memory, now);
     if (head.pinned_at)
       await client.query("UPDATE memories SET pinned_at = $2 WHERE id = $1", [memory.id, head.pinned_at]);
     return { memory, retracted_id: head.id };

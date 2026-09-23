@@ -5,7 +5,7 @@ import { entitiesInText } from "../memory/entities.js";
 import { MEMORY_COLUMNS, mapMemory } from "../memory/row.js";
 import { scopeSql, servingSql } from "../memory/serving.js";
 import { lastRetrieved, recordUsage } from "../memory/usage.js";
-import { modelDimensions, similaritySql } from "../memory/vectors.js";
+import { modelDimensions, nearestQuery, similaritySql } from "../memory/vectors.js";
 import { embeddingsEnabled, resolveScope } from "../memory/write.js";
 import { combine, effectiveWeights, type Signals, toSignals } from "./score.js";
 
@@ -143,7 +143,8 @@ async function semanticPool(app: App, vector: readonly number[], where: Where): 
   if (dimensions === undefined || dimensions !== vector.length) return new Map();
   const p = new Params();
   const sim = similaritySql(model, dimensions, p.add(`[${vector.join(",")}]`));
-  const res = await app.pool.query<{ id: string; similarity: number }>(
+  const rows = await nearestQuery<{ id: string; similarity: number }>(
+    app.pool,
     `SELECT m.id, ${sim.similarity} AS similarity
      FROM memory_embeddings e JOIN memories m ON m.id = e.memory_id
      WHERE ${sim.filter} AND ${where(p, "m")}
@@ -151,7 +152,7 @@ async function semanticPool(app: App, vector: readonly number[], where: Where): 
      LIMIT ${POOL}`,
     p.values,
   );
-  return new Map(res.rows.map((r) => [r.id, Number(r.similarity)]));
+  return new Map(rows.map((r) => [r.id, Number(r.similarity)]));
 }
 
 /**

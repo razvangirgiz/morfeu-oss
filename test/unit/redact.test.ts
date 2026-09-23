@@ -44,3 +44,29 @@ describe("redact", () => {
     expect(redactJson({ a: [fake("ghp_", "x".repeat(36))], n: 1 })).toEqual({ a: ["[redacted:github]"], n: 1 });
   });
 });
+
+describe("redact, edge cases", () => {
+  it.each([
+    ["DB_PASSWORD=hunter2", "DB_PASSWORD=[redacted:assignment]"],
+    ['password: "correct horse battery staple"', 'password: "[redacted:assignment]"'],
+    ["PGPASSWORD=p@ss;word123", "PGPASSWORD=[redacted:assignment]"],
+    ["redis://:s3cretpassw0rd@cache:6379", "redis://:[redacted:url-credentials]@cache:6379"],
+    ["postgres://app:ab/cd#ef@db/x", "postgres://app:[redacted:url-credentials]@db/x"],
+    ["curl -u admin:SuperSecret123 https://x", "curl -u admin:[redacted:basic-auth] https://x"],
+  ])("masks %s", (input, expected) => {
+    expect(redact(input).text).toBe(expected);
+  });
+
+  it("leaves words that merely contain a keyword alone", () => {
+    for (const text of ["tokenizer: sentencepiece_model_v2", "max_tokens: 4096000", "secretary=someone"]) {
+      expect(redact(text).text).toBe(text);
+    }
+  });
+
+  it("stays fast on large pastes of identifier-like text", () => {
+    const big = "token_token_token ".repeat(20_000) + "x_".repeat(100_000);
+    const started = Date.now();
+    redact(big);
+    expect(Date.now() - started).toBeLessThan(1500);
+  });
+});

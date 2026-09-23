@@ -3,7 +3,9 @@ import type { DreamAction, Memory } from "../core/types.js";
 import type { PoolClient } from "../db/client.js";
 import { activeHead, isUuid, loadMemory } from "../memory/chain.js";
 import { entitiesOf } from "../memory/entities.js";
+import { MEMORY_COLUMNS, mapMemory } from "../memory/row.js";
 import { clampEnd } from "../memory/save.js";
+import { settleChain } from "../memory/validity.js";
 import { insertMemory, sourcesOf } from "../memory/write.js";
 import type { DreamDecision } from "./schema.js";
 
@@ -64,17 +66,14 @@ async function duplicate(ctx: DecisionContext): Promise<DreamAction> {
 async function supersede(ctx: DecisionContext): Promise<DreamAction> {
   const { target, note } = await resolveTarget(ctx);
   if (!target) return add(ctx, note);
-  const { candidate } = ctx;
-  const change = clampEnd(candidate.valid_from ?? candidate.observed_at, target.valid_from);
-  await ctx.client.query(
+  const { candidate, client, now } = ctx;
+  // The new claim starts when it was said, unless it says otherwise.
+  const res = await client.query(
     `UPDATE memories SET status = 'active', supersedes_id = $2, valid_from = COALESCE(valid_from, $3)
-     WHERE id = $1 AND status = 'candidate'`,
-    [candidate.id, target.id, change],
+     WHERE id = $1 AND status = 'candidate' RETURNING ${MEMORY_COLUMNS}`,
+    [candidate.id, target.id, candidate.observed_at],
   );
-  await ctx.client.query(
-    "UPDATE memories SET status = 'superseded', superseded_by_id = $2, valid_until = $3 WHERE id = $1 AND status = 'active'",
-    [target.id, candidate.id, change],
-  );
+  await settleChain(client, mapMemory(res.rows[0]), now);
   await record(ctx, "supersede", target.id);
   return "supersede";
 }
@@ -84,9 +83,9 @@ async function temporalUpdate(ctx: DecisionContext): Promise<DreamAction> {
   const resolved = ctx.decision.target_id ? await resolveTarget(ctx) : { target: null };
   if (ctx.decision.target_id && !resolved.target) return add(ctx, resolved.note);
   const target = resolved.target;
-  const validFrom = parseDate(decision.valid_from) ?? candidate.valid_from;
+  const validFrom = parseDate(decision.valid_from) ?? candidate.valid_from ?? candidate.observed_at;
   let validUntil = parseDate(decision.valid_until) ?? candidate.valid_until;
-  if (validFrom && validUntil && validUntil < validFrom) validUntil = null;
+  if (validUntil && validUntil < validFrom) validUntil = null;
   const rewritten = await insertMemory(
     ctx.app,
     client,
@@ -113,24 +112,21 @@ async function temporalUpdate(ctx: DecisionContext): Promise<DreamAction> {
     candidate.id,
     rewritten.id,
   ]);
-  if (target) {
-    await client.query(
-      "UPDATE memories SET status = 'superseded', superseded_by_id = $2, valid_until = $3 WHERE id = $1 AND status = 'active'",
-      [target.id, rewritten.id, clampEnd(validFrom ?? now, target.valid_from)],
-    );
-  }
+  if (target) await settleChain(client, rewritten, now);
   await record(ctx, "temporal_update", rewritten.id);
   return "temporal_update";
 }
 
 async function expire(ctx: DecisionContext): Promise<DreamAction> {
   const { candidate, decision, client, now } = ctx;
-  const end = parseDate(decision.valid_until) ?? now;
+  const stated = parseDate(decision.valid_until);
   if (!decision.target_id || decision.target_id === candidate.id) {
-    // A claim that already ended is still history worth keeping.
+    // A claim that had already ended when it was said is still history worth
+    // keeping. Without a date, it ended no later than when it was said.
+    const end = stated ?? candidate.valid_until ?? candidate.observed_at;
     await client.query("UPDATE memories SET status = 'expired', valid_until = $2 WHERE id = $1", [
       candidate.id,
-      clampEnd(candidate.valid_until ?? end, candidate.valid_from),
+      clampEnd(end, candidate.valid_from),
     ]);
     await record(ctx, "expire", candidate.id);
     return "expire";
@@ -138,10 +134,13 @@ async function expire(ctx: DecisionContext): Promise<DreamAction> {
   const { target, note } = await resolveTarget(ctx);
   if (!target) return add(ctx, note);
   await setStatus(ctx, candidate.id, "invalidated");
-  await client.query("UPDATE memories SET status = 'expired', valid_until = $2 WHERE id = $1 AND status = 'active'", [
-    target.id,
-    clampEnd(end, target.valid_from),
-  ]);
+  // Never extends a validity that already ends earlier.
+  const end = clampEnd(stated ?? now, target.valid_from);
+  await client.query(
+    `UPDATE memories SET status = 'expired', valid_until = LEAST(COALESCE(valid_until, $2), $2)
+     WHERE id = $1 AND status = 'active'`,
+    [target.id, end],
+  );
   await record(ctx, "expire", target.id);
   return "expire";
 }

@@ -3,6 +3,7 @@ import type { Db } from "../db/client.js";
 import { toDate } from "../db/client.js";
 import { chainOf, requireMemory } from "./chain.js";
 import { entitiesOf } from "./entities.js";
+import { isForgotten } from "./forget.js";
 
 export type Explanation = {
   memory: Memory;
@@ -25,6 +26,7 @@ const MAX_SOURCE_CHARS = 2000;
 /** Why morfeu believes something: the chain, the events it came from, and what consolidation decided. */
 export async function explainMemory(db: Db, memoryId: string): Promise<Explanation> {
   const memory = await requireMemory(db, memoryId);
+  if (isForgotten(memory)) throw new Error(`memory ${memoryId} was forgotten`);
   const sources = await db.query(
     `SELECT e.id, e.source, e.type, e.occurred_at, e.session_id, e.content_text
      FROM memory_sources ms JOIN events e ON e.id = ms.event_id
@@ -37,7 +39,7 @@ export async function explainMemory(db: Db, memoryId: string): Promise<Explanati
   );
   return {
     memory,
-    chain: await chainOf(db, memory),
+    chain: (await chainOf(db, memory)).filter((m) => !isForgotten(m)),
     entities: await entitiesOf(db, memoryId),
     sources: sources.rows.map((r) => ({
       event_id: r.id,

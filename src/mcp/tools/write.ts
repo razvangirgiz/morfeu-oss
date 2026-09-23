@@ -21,7 +21,7 @@ import {
 import { json, SCOPE_HELP, type Tool } from "../tool.js";
 
 const TYPE_GUIDE =
-  "Types: fact, preference (how the user likes things), relationship (a person and who they are to the user), event (something that happened, dated), goal, decision (what and why), routine, project_state (where a project stands now), instruction (a standing rule for an agent).";
+  "Types: fact, preference (how the user likes things), relationship (a person and who they are to the user), event (something that happened, dated), goal, decision (what and why), routine, project_state (where a project stands now). Standing instructions for agents are added by the user on the command line.";
 
 export const saveTool: Tool = {
   name: "morfeu_save",
@@ -31,7 +31,7 @@ export const saveTool: Tool = {
     additionalProperties: false,
     properties: {
       content: { type: "string", description: "One self-contained claim; name the subject instead of using pronouns." },
-      type: { type: "string", enum: [...MEMORY_TYPES] },
+      type: { type: "string", enum: MEMORY_TYPES.filter((t) => t !== "instruction") },
       scope: { type: "string", description: `Where it belongs. ${SCOPE_HELP}` },
       importance: { type: "number", minimum: 0, maximum: 1 },
       valid_from: { type: "string", description: "ISO date the claim starts being true, if known." },
@@ -60,11 +60,19 @@ export const saveTool: Tool = {
     openWorldHint: false,
   },
   async run(app, args, now) {
+    const type = oneOf(args, "type", MEMORY_TYPES);
+    if (type === "instruction") {
+      // A standing instruction changes every future session; it must come from the user, not from
+      // text an agent read somewhere.
+      throw new Error(
+        'instructions are added by the user: ask them to run `morfeu save "<instruction>" --type instruction --scope agent:<name>`',
+      );
+    }
     const result = await saveMemory(
       app,
       {
         content: text(args, "content"),
-        type: oneOf(args, "type", MEMORY_TYPES),
+        type,
         scope: scope(args, "scope"),
         importance: optionalNumber(args, "importance"),
         valid_from: optionalDate(args, "valid_from"),
@@ -110,6 +118,8 @@ export const correctTool: Tool = {
         ...(args.valid_from !== undefined ? { valid_from: optionalDate(args, "valid_from") ?? null } : {}),
         ...(args.valid_until !== undefined ? { valid_until: optionalDate(args, "valid_until") ?? null } : {}),
         source: "mcp",
+        // Relayed by an agent: consolidation may still revise it, unlike what the user states on the CLI.
+        origin: "saved",
       },
       now,
     );

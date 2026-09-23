@@ -124,7 +124,7 @@ const forgetCommand: Command = {
     const reason = stringValue(ctx.values, "reason");
     if (!reason) throw new Error("--reason is required");
     const result = await withApp(ctx, (app) => forgetMemory(app, requireArg(ctx, 0, "id"), reason, ctx.now()));
-    ctx.out(`forgot ${result.id}`);
+    ctx.out(result.already ? `${result.id} was already forgotten` : `forgot ${result.id}`);
     return 0;
   },
 };

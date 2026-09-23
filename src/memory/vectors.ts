@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { type Db, quoteIdent, quoteLiteral, vectorLiteral } from "../db/client.js";
+import pg from "pg";
+import { type Db, type Pool, quoteIdent, quoteLiteral, vectorLiteral, withTx } from "../db/client.js";
 
 /**
  * Vectors are stored per (memory, model) in one table whose column has no fixed
@@ -24,32 +25,52 @@ export async function modelDimensions(db: Db, model: string): Promise<number | u
   return value;
 }
 
-async function ensureIndex(db: Db, model: string, dimensions: number): Promise<void> {
-  const known = await modelDimensions(db, model);
-  if (known === dimensions) return;
-  if (known !== undefined) {
-    throw new Error(
-      `embedding model ${model} returned ${dimensions}-dimensional vectors, but stored vectors have ${known}; ` +
-        "use a different model name or keep the model's native dimension",
-    );
+/**
+ * Makes sure the model has its index before vectors are stored. The index is
+ * created on a separate, short-lived connection and committed on its own, so
+ * a rollback elsewhere never leaves this process believing in an index that
+ * does not exist, and a caller holding every pooled connection cannot starve
+ * it. Returns false when the vectors cannot be indexed (a dimension change, or
+ * more than pgvector's 2000), and the caller stores the memory without one.
+ */
+export async function prepareVectorIndex(databaseUrl: string, model: string, dimensions: number): Promise<boolean> {
+  const cached = knownDimensions.get(model);
+  if (cached !== undefined) return cached === dimensions;
+  if (dimensions < 1 || dimensions > 2000) return false;
+  const client = new pg.Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('morfeu-vector-index'))");
+    const known = await client.query<{ value: string }>("SELECT value FROM settings WHERE key = $1", [
+      `vector_dims:${model}`,
+    ]);
+    let stored = known.rows[0] ? Number(known.rows[0].value) : undefined;
+    if (stored === undefined) {
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS ${quoteIdent(indexName(model))} ON memory_embeddings
+         USING hnsw ((embedding::vector(${dimensions})) vector_cosine_ops)
+         WHERE model = ${quoteLiteral(model)}`,
+      );
+      await client.query("INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())", [
+        `vector_dims:${model}`,
+        String(dimensions),
+      ]);
+      stored = dimensions;
+    }
+    await client.query("COMMIT");
+    knownDimensions.set(model, stored);
+    return stored === dimensions;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  } finally {
+    await client.end();
   }
-  if (dimensions > 2000)
-    throw new Error(`pgvector indexes vectors of at most 2000 dimensions; ${model} has ${dimensions}`);
-  await db.query(
-    `CREATE INDEX IF NOT EXISTS ${quoteIdent(indexName(model))} ON memory_embeddings
-     USING hnsw ((embedding::vector(${dimensions})) vector_cosine_ops)
-     WHERE model = ${quoteLiteral(model)}`,
-  );
-  await db.query(
-    `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO NOTHING`,
-    [`vector_dims:${model}`, String(dimensions)],
-  );
-  knownDimensions.set(model, dimensions);
 }
 
+/** Stores a vector; call prepareVectorIndex for the model first. */
 export async function storeVector(db: Db, memoryId: string, model: string, vector: readonly number[]): Promise<void> {
-  await ensureIndex(db, model, vector.length);
   await db.query(
     `INSERT INTO memory_embeddings (memory_id, model, embedding) VALUES ($1, $2, $3::vector)
      ON CONFLICT (memory_id, model) DO NOTHING`,
@@ -96,4 +117,29 @@ export async function memoriesWithoutVector(
 /** For tests: forget cached dimensions after the database is reset. */
 export function clearVectorCache(): void {
   knownDimensions.clear();
+}
+
+let iterativeScan: boolean | undefined;
+
+/**
+ * Runs a nearest-neighbour query so that filters do not silently shrink it.
+ * HNSW returns its ef_search closest rows before WHERE clauses apply; with
+ * scope, status or as-of filters most of them can be dropped. A larger
+ * ef_search, and on pgvector 0.8+ iterative scans, keep the pool full.
+ */
+export async function nearestQuery<T extends Record<string, unknown>>(
+  pool: Pool,
+  sql: string,
+  params: unknown[],
+): Promise<T[]> {
+  if (iterativeScan === undefined) {
+    const res = await pool.query<{ v: string }>("SELECT extversion AS v FROM pg_extension WHERE extname = 'vector'");
+    const [major = 0, minor = 0] = (res.rows[0]?.v ?? "0.0").split(".").map(Number);
+    iterativeScan = major > 0 || minor >= 8;
+  }
+  return withTx(pool, async (client) => {
+    await client.query("SET LOCAL hnsw.ef_search = 200");
+    if (iterativeScan) await client.query("SET LOCAL hnsw.iterative_scan = relaxed_order");
+    return (await client.query<T>(sql, params)).rows;
+  });
 }

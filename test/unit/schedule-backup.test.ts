@@ -5,7 +5,12 @@ import { describe, expect, it } from "vitest";
 import { pruneBackups } from "../../src/ops/backup.js";
 import { cronLine, scheduleFiles } from "../../src/ops/schedule.js";
 
-const s = { nodePath: "/usr/bin/node", cliPath: "/opt/morfeu/dist/cli.js", home: "/home/alex" };
+const s = {
+  nodePath: "/usr/bin/node",
+  cliPath: "/opt/morfeu/dist/cli.js",
+  home: "/home/alex",
+  path: "/home/alex/.orbstack/bin:/usr/bin",
+};
 
 describe("schedule", () => {
   it("writes a launchd agent on macOS", () => {
@@ -13,6 +18,8 @@ describe("schedule", () => {
     expect(plist?.path).toBe("/home/alex/Library/LaunchAgents/io.github.morfeu.run.plist");
     expect(plist?.content).toContain("<string>/opt/morfeu/dist/cli.js</string><string>run</string>");
     expect(plist?.content).toContain("<key>Hour</key><integer>4</integer>");
+    // launchd starts jobs with /usr/bin:/bin only; docker lives elsewhere.
+    expect(plist?.content).toContain("<key>PATH</key><string>/home/alex/.orbstack/bin:/usr/bin:/opt/homebrew/bin");
   });
 
   it("writes a systemd user service and timer on Linux", () => {
@@ -20,6 +27,7 @@ describe("schedule", () => {
     expect(files.map((f) => f.path.split("/").pop())).toEqual(["morfeu-run.service", "morfeu-run.timer"]);
     expect(files[0]?.content).toContain("ExecStart=/usr/bin/node /opt/morfeu/dist/cli.js run");
     expect(files[1]?.content).toContain("OnCalendar=*-*-* 04:30:00");
+    expect(files[0]?.content).toContain('Environment="PATH=/home/alex/.orbstack/bin:/usr/bin:');
   });
 
   it("falls back to a crontab line elsewhere", () => {

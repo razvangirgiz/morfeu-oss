@@ -23,8 +23,9 @@ const PATTERNS: readonly Pattern[] = [
   { kind: "huggingface", regex: /\bhf_[A-Za-z0-9]{30,}\b/g },
   { kind: "jwt", regex: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
   {
+    // scheme://user:password@host, also with an empty user or a password containing / or #
     kind: "url-credentials",
-    regex: /\b([a-z][a-z0-9+.-]*:\/\/[^:/?#\s@]+):([^@/?#\s]+)@/gi,
+    regex: /\b([a-z][a-z0-9+.-]*:\/\/[^:/?#\s@]*):([^@\s]{1,256})@/gi,
     replace: (_m, prefix) => `${prefix}:[redacted:url-credentials]@`,
   },
   {
@@ -33,11 +34,29 @@ const PATTERNS: readonly Pattern[] = [
     replace: (_m, prefix) => `${prefix}[redacted:bearer]`,
   },
   {
-    // NAME_KEY=value, "api_secret": "value", PASSWORD: value
+    // curl -u user:password, --user user:password
+    kind: "basic-auth",
+    regex: /(\s(?:-u|--user)\s+["']?[^\s:"']{1,64}:)[^\s"']{1,256}/g,
+    replace: (_m, prefix) => `${prefix}[redacted:basic-auth]`,
+  },
+  {
+    // NAME_KEY=value, "api_secret": "value", PASSWORD: value, password: "a few words"
     kind: "assignment",
     regex:
-      /\b([A-Za-z0-9_]*(?:api[_-]?key|secret|token|passw(?:or)?d|passphrase|credentials?)[A-Za-z0-9_]*["']?\s*[:=]\s*["']?)([^\s"',;]{8,})/gi,
-    replace: (_m, prefix) => `${prefix}[redacted:assignment]`,
+      /\b([A-Za-z0-9_-]{0,40}(?:api[_-]?key|secret|token|passw(?:or)?d|passphrase|credentials?|pwd)[A-Za-z0-9_-]{0,20})(["']?\s*[:=]\s*)(?:"([^"\n]{6,256})"|'([^'\n]{6,256})'|([^\s"',]{6,256}))/gi,
+    replace: (match, key, separator, doubleQuoted, singleQuoted) => {
+      // "tokenizer", "tokens", "secretary": the keyword must stand as its own word inside the name.
+      if (
+        !/(?:^|[_-])(?:api[_-]?key|secret|token|passw(?:or)?d|passphrase|credentials?|pwd)(?:$|[_-])|apikey|password/i.test(
+          key,
+        )
+      ) {
+        return match;
+      }
+      if (doubleQuoted !== undefined) return `${key}${separator}"[redacted:assignment]"`;
+      if (singleQuoted !== undefined) return `${key}${separator}'[redacted:assignment]'`;
+      return `${key}${separator}[redacted:assignment]`;
+    },
   },
 ];
 

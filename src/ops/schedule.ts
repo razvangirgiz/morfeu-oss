@@ -14,6 +14,8 @@ const LABEL = "io.github.morfeu.run";
 const UNIT = "morfeu-run";
 
 export type Schedule = {
+  /** PATH for the job. Schedulers start jobs with a minimal PATH that misses docker and node. */
+  path?: string;
   platform: NodeJS.Platform;
   nodePath: string;
   cliPath: string;
@@ -29,6 +31,7 @@ export function scheduleFiles(s: Schedule): { path: string; content: string }[] 
   const hour = s.hour ?? 4;
   const minute = s.minute ?? 30;
   const logs = platformDirs(process.env, s.platform, home).logs;
+  const path = jobPath(s);
   if (s.platform === "darwin") {
     return [
       {
@@ -40,6 +43,8 @@ export function scheduleFiles(s: Schedule): { path: string; content: string }[] 
   <key>Label</key><string>${LABEL}</string>
   <key>ProgramArguments</key>
   <array><string>${xml(s.nodePath)}</string><string>${xml(s.cliPath)}</string><string>run</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>${xml(path)}</string></dict>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>${hour}</integer><key>Minute</key><integer>${minute}</integer></dict>
   <key>StandardOutPath</key><string>${xml(join(logs, "run.log"))}</string>
@@ -60,6 +65,7 @@ Description=morfeu: ingest, extract and consolidate memories
 
 [Service]
 Type=oneshot
+Environment="PATH=${path}"
 ExecStart=${systemdQuote(s.nodePath)} ${systemdQuote(s.cliPath)} run
 `,
       },
@@ -128,6 +134,16 @@ export function removeSchedule(s: Schedule): ScheduleResult {
 export function scheduleInstalled(s: Schedule): boolean {
   const files = scheduleFiles(s);
   return files.length > 0 && files.every((f) => existsSync(f.path));
+}
+
+/**
+ * The PATH the job runs with: the one `schedule install` ran under (where the
+ * user's docker and pg_dump are found), plus common install locations.
+ */
+function jobPath(s: Schedule): string {
+  const extra = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  const parts = [...(s.path ?? process.env.PATH ?? "").split(":"), ...extra].filter(Boolean);
+  return [...new Set(parts)].join(":");
 }
 
 function xml(value: string): string {

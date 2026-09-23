@@ -1,6 +1,7 @@
 import type { App } from "../app.js";
 import type { Memory, MemoryType, Scope } from "../core/types.js";
 import { Params, toDate } from "../db/client.js";
+import { forgottenSql } from "../memory/forget.js";
 import { mapMemory, memoryColumns } from "../memory/row.js";
 import { scopeSql } from "../memory/serving.js";
 import { resolveScope } from "../memory/write.js";
@@ -30,7 +31,7 @@ export type ChangesOptions = {
 // An active row whose valid_until has passed is reported as expired even
 // before the dream marks it so.
 const classified = (now: string) => `
-  SELECT ${memoryColumns("m")}, s.id AS successor_id,
+  SELECT ${memoryColumns("m")}, CASE WHEN ${forgottenSql("s")} THEN NULL ELSE s.id END AS successor_id,
     CASE
       WHEN m.status = 'superseded' AND m.retracted_at IS NOT NULL THEN 'corrected'
       WHEN m.status = 'superseded' THEN 'changed'

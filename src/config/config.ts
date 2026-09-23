@@ -66,6 +66,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const llmProvider = oneOf(e, "MORFEU_LLM_PROVIDER", "openai", LLM_PROVIDERS);
   const embeddingProvider = oneOf(e, "MORFEU_EMBEDDING_PROVIDER", "openai", EMBEDDING_PROVIDERS);
   const openaiKey = str(e, "OPENAI_API_KEY", "");
+  // OPENAI_API_KEY is only a fallback for OpenAI itself, never sent to another server.
+  const llmBaseUrl = str(e, "MORFEU_LLM_BASE_URL", "");
+  const embeddingBaseUrl = str(
+    e,
+    "MORFEU_EMBEDDING_BASE_URL",
+    embeddingProvider === "ollama" ? "http://127.0.0.1:11434" : "",
+  );
   const dirs = platformDirs(env);
 
   return {
@@ -77,14 +84,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     llm: {
       provider: llmProvider,
       model: str(e, "MORFEU_LLM_MODEL", "gpt-5-mini"),
-      baseUrl: str(e, "MORFEU_LLM_BASE_URL", ""),
-      apiKey: str(e, "MORFEU_LLM_API_KEY", openaiKey),
+      baseUrl: llmBaseUrl,
+      apiKey: str(e, "MORFEU_LLM_API_KEY", llmBaseUrl ? "" : openaiKey),
     },
     embedding: {
       provider: embeddingProvider,
       model: str(e, "MORFEU_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODELS[embeddingProvider]),
-      baseUrl: str(e, "MORFEU_EMBEDDING_BASE_URL", embeddingProvider === "ollama" ? "http://127.0.0.1:11434" : ""),
-      apiKey: str(e, "MORFEU_EMBEDDING_API_KEY", openaiKey),
+      baseUrl: embeddingBaseUrl,
+      apiKey: str(e, "MORFEU_EMBEDDING_API_KEY", embeddingBaseUrl ? "" : openaiKey),
     },
     maxLlmCalls: int(e, "MORFEU_MAX_LLM_CALLS", 100),
     semanticFloor: num(e, "MORFEU_SEMANTIC_FLOOR", embeddingProvider === "fake" ? 0 : 0.3),

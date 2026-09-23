@@ -14,7 +14,7 @@ import { appendEvent } from "../ledger/events.js";
 import { redact } from "../ledger/redact.js";
 import { linkEntities } from "./entities.js";
 import { MEMORY_COLUMNS, mapMemory } from "./row.js";
-import { storeVector } from "./vectors.js";
+import { prepareVectorIndex, storeVector } from "./vectors.js";
 
 export type NewMemory = {
   content: string;
@@ -115,7 +115,16 @@ export async function insertMemory(deps: WriteDeps, db: Db, input: NewMemory, no
   if (input.entities?.length) await linkEntities(db, memory.id, input.entities);
   const vector =
     content === input.content.trim() && input.vector !== undefined ? input.vector : await embedOrNull(deps, content);
-  if (vector) await storeVector(db, memory.id, deps.embedder.model, vector);
+  if (vector) {
+    if (await prepareVectorIndex(deps.config.databaseUrl, deps.embedder.model, vector.length)) {
+      await storeVector(db, memory.id, deps.embedder.model, vector);
+    } else {
+      warnEmbeddingUnavailable(
+        deps,
+        new Error(`${deps.embedder.model} vectors of ${vector.length} dimensions cannot be indexed`),
+      );
+    }
+  }
   return memory;
 }
 

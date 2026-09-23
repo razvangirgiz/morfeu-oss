@@ -26,12 +26,15 @@ export type AppOverrides = {
 export function createApp(overrides: AppOverrides = {}): App {
   const config = overrides.config ?? loadConfig();
   const llm = overrides.llm ?? createLlm(config);
+  const log = overrides.log ?? createLogger(config.logLevel);
   return {
     config,
-    pool: overrides.pool ?? createPool(config.databaseUrl),
+    pool:
+      overrides.pool ??
+      createPool(config.databaseUrl, { onError: (err) => log.warn(`database connection lost: ${err.message}`) }),
     embedder: overrides.embedder ?? createEmbedder(config),
     llm: llm instanceof BudgetedLLM ? llm : new BudgetedLLM(llm, config.maxLlmCalls),
-    log: overrides.log ?? createLogger(config.logLevel),
+    log,
   };
 }
 

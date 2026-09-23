@@ -139,7 +139,9 @@ async function gatherAnswers(
         ? await prompt.text("Model name (must support structured JSON output)", existing.MORFEU_LLM_MODEL ?? "qwen3:8b")
         : existing.MORFEU_LLM_MODEL);
     if (!model) throw new Error("--llm-model is required with an OpenAI-compatible base URL");
-    llm = { kind: "compatible", baseUrl: llmChoice, model };
+    const apiKey =
+      existing.MORFEU_LLM_API_KEY || (prompt ? await prompt.secret("API key (leave empty for a local server)") : "");
+    llm = { kind: "compatible", baseUrl: llmChoice, model, apiKey };
   }
 
   let emb = flag("embeddings");

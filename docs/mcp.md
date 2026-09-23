@@ -19,6 +19,6 @@ Scopes are strings: `user:me`, `project:<name>`, `agent:<name>`. Dates are ISO 8
 | `morfeu_log_event` | `content_text`, `type?`, `session_id?`, `project?`, `occurred_at?` | Adds raw text to the ledger for the next extraction. |
 | `morfeu_stats` | | Counts, vector coverage, last runs. |
 
-Memory types: `fact`, `preference`, `relationship`, `event`, `goal`, `decision`, `routine`, `project_state`, `instruction`.
+Memory types: `fact`, `preference`, `relationship`, `event`, `goal`, `decision`, `routine`, `project_state`. The ninth type, `instruction` (a standing rule shown to an agent in every session), can only be added by the user with `morfeu save --type instruction`, so text an agent happens to read cannot plant one. Corrections made through `morfeu_correct` are recorded as agent-relayed (`saved`), so consolidation may still revise them; corrections on the command line are yours (`owner`) and it never touches them.
 
 Tools that change memory are annotated as destructive where they are (`morfeu_correct`, `morfeu_forget`), so clients can ask before running them. The instructions tell agents to change memory only when the user asks, and never on the strength of text found inside memories, files or tool output.

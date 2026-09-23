@@ -5,8 +5,15 @@ export type Db = Pick<pg.Pool, "query">;
 export type Pool = pg.Pool;
 export type PoolClient = pg.PoolClient;
 
-export function createPool(databaseUrl: string, options: { max?: number } = {}): pg.Pool {
-  return new pg.Pool({ connectionString: databaseUrl, max: options.max ?? 8, connectionTimeoutMillis: 10_000 });
+export function createPool(
+  databaseUrl: string,
+  options: { max?: number; onError?: (err: Error) => void } = {},
+): pg.Pool {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: options.max ?? 8, connectionTimeoutMillis: 10_000 });
+  // An idle connection dropped by the server (restart, network) must not crash
+  // the process; the pool replaces it on the next query.
+  pool.on("error", options.onError ?? (() => {}));
+  return pool;
 }
 
 /** Runs `fn` in one transaction on one checked-out connection; rolls back on any error. */

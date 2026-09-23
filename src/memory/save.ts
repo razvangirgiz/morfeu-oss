@@ -3,7 +3,9 @@ import type { EntityInput, Memory, MemoryType, Scope, Volatility } from "../core
 import { withTx } from "../db/client.js";
 import { redact } from "../ledger/redact.js";
 import { activeHead, requireMemory } from "./chain.js";
+import { foldText } from "./entities.js";
 import { MEMORY_COLUMNS, mapMemory } from "./row.js";
+import { settleChain } from "./validity.js";
 import { insertMemory, MAX_CONTENT_CHARS, resolveScope } from "./write.js";
 
 export type SaveInput = {
@@ -37,6 +39,10 @@ export async function saveMemory(app: App, input: SaveInput, now: Date): Promise
   validateContent(content);
   const scope = resolveScope(input.scope, app.config.userId);
   return withTx(app.pool, async (client) => {
+    // Serializes identical saves, so two agents saving the same sentence at once get one row.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `save:${scope.type}:${scope.id}:${input.type}:${foldText(content).replace(/\s+/g, " ")}`,
+    ]);
     if (!input.supersedes) {
       const existing = await client.query(
         `SELECT ${MEMORY_COLUMNS} FROM memories
@@ -61,6 +67,7 @@ export async function saveMemory(app: App, input: SaveInput, now: Date): Promise
         throw new Error(`supersedes: memory ${target.id} was stated by the user; change it with morfeu correct`);
       }
     }
+    // A replacement starts now unless told otherwise; the old claim ends there (see settleChain).
     const validFrom = input.valid_from ?? (target ? now : null);
     const memory = await insertMemory(
       app,
@@ -86,11 +93,7 @@ export async function saveMemory(app: App, input: SaveInput, now: Date): Promise
       now,
     );
     if (target) {
-      await client.query(
-        `UPDATE memories SET status = 'superseded', superseded_by_id = $2, valid_until = $3
-         WHERE id = $1 AND status = 'active'`,
-        [target.id, memory.id, clampEnd(validFrom ?? now, target.valid_from)],
-      );
+      await settleChain(client, memory, now);
       if (target.pinned_at)
         await client.query("UPDATE memories SET pinned_at = $2 WHERE id = $1", [memory.id, target.pinned_at]);
     }

@@ -1,6 +1,6 @@
 import type { App } from "../app.js";
 import { errorMessage } from "../db/client.js";
-import { memoriesWithoutVector, storeVector } from "./vectors.js";
+import { memoriesWithoutVector, prepareVectorIndex, storeVector } from "./vectors.js";
 
 const BATCH = 32;
 
@@ -22,7 +22,11 @@ export async function reindexVectors(app: App, limit = 2000): Promise<{ embedded
     }
     for (const [i, memory] of batch.entries()) {
       const vector = vectors[i];
-      if (vector) await storeVector(app.pool, memory.id, app.embedder.model, vector);
+      if (!vector) continue;
+      if (!(await prepareVectorIndex(app.config.databaseUrl, app.embedder.model, vector.length))) {
+        return { embedded, error: `${app.embedder.model} vectors of ${vector.length} dimensions cannot be indexed` };
+      }
+      await storeVector(app.pool, memory.id, app.embedder.model, vector);
     }
     embedded += batch.length;
   }

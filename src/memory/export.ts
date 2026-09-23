@@ -1,5 +1,6 @@
 import { MEMORY_TYPES, type Scope } from "../core/types.js";
 import { type Db, Params } from "../db/client.js";
+import { forgottenSql } from "./forget.js";
 import { mapMemory, memoryColumns } from "./row.js";
 import { scopeSql } from "./serving.js";
 
@@ -17,7 +18,7 @@ export async function exportMarkdown(db: Db, options: ExportOptions = {}): Promi
   const p = new Params();
   const where = [
     scopeSql(options.scopes, (v) => p.add(v), "m"),
-    options.all ? "TRUE" : "m.status = 'active' AND m.archived_at IS NULL",
+    options.all ? `NOT ${forgottenSql("m")}` : "m.status = 'active' AND m.archived_at IS NULL",
   ].join(" AND ");
   const res = await db.query(
     `SELECT ${memoryColumns("m")} FROM memories m WHERE ${where}

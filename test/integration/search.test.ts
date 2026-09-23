@@ -93,3 +93,15 @@ describe("search", () => {
     await expect(search(app, "  ", { now: T0 })).rejects.toThrow(/empty/);
   });
 });
+
+describe("semantic recall under filters", () => {
+  it("still finds a scoped match when most near neighbours are filtered out", async () => {
+    // Many close neighbours in another scope must not crowd out the one in scope.
+    for (let i = 0; i < 120; i++) {
+      await saveMemory(app, { content: `acme service ${i} runs on kubernetes cluster`, type: "fact", scope: acme }, T0);
+    }
+    await saveMemory(app, { content: "alex service runs on kubernetes at home", type: "fact", scope: me }, T0);
+    const result = await search(app, "service kubernetes cluster", { now: days(1), scopes: [me], limit: 5 });
+    expect(result.hits.map((h) => h.memory.content)).toContain("alex service runs on kubernetes at home");
+  });
+});

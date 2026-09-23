@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { chmodSync, createWriteStream, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { finished } from "node:stream/promises";
 import type { Config } from "../config/config.js";
 import { CONTAINER } from "./docker.js";
 
@@ -28,24 +29,26 @@ export async function backupDatabase(
           ["exec", CONTAINER, "pg_dump", "-U", decodeURIComponent(url.username), "-d", url.pathname.slice(1), "-Fc"],
         ]
       : ["pg_dump", ["--dbname", config.databaseUrl, "-Fc"]];
-  await new Promise<void>((resolve, reject) => {
-    const out = createWriteStream(path, { mode: 0o600 });
+  const out = createWriteStream(path, { mode: 0o600 });
+  try {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
     child.stdout.pipe(out);
-    child.on("error", (err) => reject(new Error(`${command} is not available: ${err.message}`)));
-    child.on("close", (code) => {
-      out.close();
-      if (code === 0) resolve();
-      else reject(new Error(`backup failed (${command} exited with ${code}): ${stderr.trim()}`));
+    const exit = new Promise<number | null>((resolve, reject) => {
+      child.on("error", (err) => reject(new Error(`${command} is not available: ${err.message}`)));
+      child.on("close", resolve);
     });
-  }).catch((err) => {
+    // Both must finish: the dump process, and every byte reaching the disk.
+    const [code] = await Promise.all([exit, finished(out)]);
+    if (code !== 0) throw new Error(`backup failed (${command} exited with ${code}): ${stderr.trim()}`);
+  } catch (err) {
+    out.destroy();
     rmSync(path, { force: true });
     throw err;
-  });
+  }
   chmodSync(path, 0o600);
   return { path, bytes: statSync(path).size, pruned: pruneBackups(config.backupDir) };
 }
