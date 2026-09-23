@@ -39,7 +39,11 @@ Candidates (not yet consolidated) can be included in present-time searches on re
 
 ## Chains
 
-`supersedes_id` and `superseded_by_id` link a memory to the one it replaced and the one that replaced it. `morfeu explain <id>` walks the chain in both directions. Commands that change a memory (correct, forget, pin) follow the chain from any row to its current head, so an old id still reaches the current claim.
+`supersedes_id` and `superseded_by_id` link a memory to the one it replaced and the one that replaced it. `morfeu explain <id>` walks the chain in both directions. Commands follow the chain from any row to its head, so an old id still reaches the current claim.
+
+Within a chain, no two claims are ever valid at the same time. Whenever a claim takes over, the ones before it end where it begins, or are retracted if it covers them entirely (`src/memory/validity.ts`); a test checks this after every kind of change.
+
+A change can be announced ahead of time: save a new claim with `supersedes` and a future `valid_from`, and the old claim stays current until then. Corrections, expiries and pins act on the claim served now; a further change acts on the newest claim, announced or not. A correction or rewrite takes its place among announced changes by date. Forgetting a claim in the middle of a chain links its neighbours and leaves its period unknown; forgetting the newest one makes the claim before it current again.
 
 ## Origins
 
