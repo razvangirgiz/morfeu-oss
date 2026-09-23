@@ -323,6 +323,28 @@ describe("served head versus announced successor", () => {
     await assertNoOverlap();
   });
 
+  it("a replacement lands between two announced successors", async () => {
+    const { berlin } = await parisThenBerlinAt40();
+    await saveMemory(
+      app,
+      {
+        content: "Alex lives in Vienna",
+        type: "fact",
+        scope: me,
+        supersedes: berlin.id,
+        valid_from: days(60),
+        entities: alex,
+      },
+      days(12),
+    );
+    const paris = (await app.pool.query("SELECT id FROM memories WHERE content = 'Alex lives in Paris'")).rows[0].id;
+    await correctMemory(app, { memoryId: paris, content: "Alex lives in Lyon", valid_from: days(50) }, days(20));
+    expect(await servedAt(days(45))).toEqual(["Alex lives in Berlin"]);
+    expect(await servedAt(days(55))).toEqual(["Alex lives in Lyon"]);
+    expect(await servedAt(days(65))).toEqual(["Alex lives in Vienna"]);
+    await assertNoOverlap();
+  });
+
   it("a correction dated after the announced move comes after it", async () => {
     const { paris } = await parisThenBerlinAt40();
     await correctMemory(app, { memoryId: paris.id, content: "Alex lives in Nice", valid_from: days(50) }, days(20));

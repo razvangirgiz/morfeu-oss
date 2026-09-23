@@ -51,40 +51,51 @@ export async function activeHead(
 }
 
 /**
- * When `replacement` takes the place of `old` (a correction, a rewrite), a
- * successor already announced for `old` (the first one still part of history)
- * follows the replacement instead, and the replacement ends where it begins.
- * A replacement that starts at or after that successor comes after it in the
- * chain instead, and the caller's settleChain ends the successor there.
+ * When `replacement` takes the place of `old` (a correction, a rewrite), it is
+ * placed in time among the successors already announced after `old`: after
+ * the last one that starts no later than it, before the first that starts
+ * later. The one before it is ended by the caller's settleChain; the one after
+ * it ends the replacement. Retracted and forgotten rows are skipped.
  * Returns the replacement as it is now.
  */
 export async function handOverSuccessor(db: Db, old: Memory, replacement: Memory): Promise<Memory> {
-  let next: Memory | null = null;
   const seen = new Set([old.id, replacement.id]);
-  for (let id = old.superseded_by_id; id && !seen.has(id) && seen.size < MAX_HOPS; ) {
-    seen.add(id);
-    const row = await loadMemory(db, id, { lock: true });
-    if (!row || row.status === "invalidated") break;
-    if (!row.retracted_at) {
-      next = row;
-      break;
+  const liveAfter = async (row: Memory): Promise<Memory | null> => {
+    for (let id = row.superseded_by_id; id && !seen.has(id) && seen.size < MAX_HOPS; ) {
+      seen.add(id);
+      const next = await loadMemory(db, id, { lock: true });
+      if (!next || next.status === "invalidated") return null;
+      if (!next.retracted_at) return next;
+      id = next.superseded_by_id;
     }
-    id = row.superseded_by_id;
+    return null;
+  };
+  const startsBy = (row: Memory) =>
+    replacement.valid_from !== null && row.valid_from !== null && row.valid_from <= replacement.valid_from;
+
+  let before: Memory | null = null;
+  let after = await liveAfter(old);
+  while (after && startsBy(after)) {
+    before = after;
+    after = await liveAfter(after);
   }
-  if (!next) return replacement;
-  if (replacement.valid_from && next.valid_from && replacement.valid_from >= next.valid_from) {
-    await db.query("UPDATE memories SET superseded_by_id = $2 WHERE id = $1", [next.id, replacement.id]);
-    await db.query("UPDATE memories SET supersedes_id = $2 WHERE id = $1", [replacement.id, next.id]);
-    return { ...replacement, supersedes_id: next.id };
+  let placed = replacement;
+  if (before) {
+    await db.query("UPDATE memories SET superseded_by_id = $2 WHERE id = $1", [before.id, replacement.id]);
+    await db.query("UPDATE memories SET supersedes_id = $2 WHERE id = $1", [replacement.id, before.id]);
+    placed = { ...placed, supersedes_id: before.id };
   }
-  await db.query("UPDATE memories SET supersedes_id = $2 WHERE id = $1", [next.id, replacement.id]);
-  const res = await db.query(
-    `UPDATE memories SET superseded_by_id = $2,
-       valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until ELSE LEAST(COALESCE(valid_until, $3), $3) END
-     WHERE id = $1 RETURNING ${MEMORY_COLUMNS}`,
-    [replacement.id, next.id, next.valid_from],
-  );
-  return mapMemory(res.rows[0]);
+  if (after) {
+    await db.query("UPDATE memories SET supersedes_id = $2 WHERE id = $1", [after.id, replacement.id]);
+    const res = await db.query(
+      `UPDATE memories SET superseded_by_id = $2,
+         valid_until = CASE WHEN $3::timestamptz IS NULL THEN valid_until ELSE LEAST(COALESCE(valid_until, $3), $3) END
+       WHERE id = $1 RETURNING ${MEMORY_COLUMNS}`,
+      [replacement.id, after.id, after.valid_from],
+    );
+    placed = mapMemory(res.rows[0]);
+  }
+  return placed;
 }
 
 /** The chain around a memory, oldest first: its predecessors, itself, and its successors. */
