@@ -16,6 +16,8 @@ export type DreamResult = Record<DreamAction, number> & {
   /** Active memories whose valid_until passed, marked expired without an LLM call. */
   expired: number;
   archived: number;
+  /** Decisions that could not be applied; their candidates were kept as added. */
+  failed: number;
   stopped?: "max_calls";
 };
 
@@ -38,6 +40,7 @@ export async function dream(app: App, options: DreamOptions): Promise<DreamResul
       candidates: 0,
       expired: await expirePassed(app, now),
       archived: app.config.decay ? await archiveStale(app.pool, now) : 0,
+      failed: 0,
       add: 0,
       duplicate: 0,
       supersede: 0,
@@ -112,27 +115,43 @@ async function consolidateBatch(app: App, runId: string, batch: Memory[], now: D
     decided.add(decision.candidate_index);
     const candidate = batch[decision.candidate_index] as Memory;
     const allowed = new Set([...batchIds, ...(neighborhoods[decision.candidate_index] ?? []).map((m) => m.id)]);
-    const action = await withTx(app.pool, async (client) => {
-      const locked = await client.query("SELECT status FROM memories WHERE id = $1 FOR UPDATE", [candidate.id]);
-      if (locked.rows[0]?.status !== "candidate") return null;
-      return applyDecision({ app, client, runId, candidate, decision, allowed, now });
-    });
+    let action: DreamAction | null;
+    try {
+      action = await withTx(app.pool, async (client) => {
+        const locked = await client.query("SELECT status FROM memories WHERE id = $1 FOR UPDATE", [candidate.id]);
+        if (locked.rows[0]?.status !== "candidate") return null;
+        return applyDecision({ app, client, runId, candidate, decision, allowed, now });
+      });
+    } catch (err) {
+      // One decision that cannot be applied must not stop the run: keep the claim as it is.
+      app.log.warn(`dream: could not apply ${decision.action} to ${candidate.id}: ${errorMessage(err)}`);
+      result.failed += 1;
+      action = (await keepAsAdded(app, runId, candidate.id, `could not apply ${decision.action}: ${errorMessage(err)}`))
+        ? "add"
+        : null;
+    }
     if (action) result[action] += 1;
   }
   for (const [i, candidate] of batch.entries()) {
     if (decided.has(i)) continue;
-    await withTx(app.pool, async (client) => {
-      const res = await client.query("UPDATE memories SET status = 'active' WHERE id = $1 AND status = 'candidate'", [
-        candidate.id,
-      ]);
-      if (res.rowCount === 0) return;
-      await client.query(
-        "INSERT INTO dream_decisions (run_id, memory_id, action, reason) VALUES ($1, $2, 'add', 'no decision returned')",
-        [runId, candidate.id],
-      );
-      result.add += 1;
-    });
+    if (await keepAsAdded(app, runId, candidate.id, "no decision returned")) result.add += 1;
   }
+}
+
+/** Activates a candidate as it is, recording why. False when it was no longer a candidate. */
+async function keepAsAdded(app: App, runId: string, candidateId: string, reason: string): Promise<boolean> {
+  return withTx(app.pool, async (client) => {
+    const res = await client.query("UPDATE memories SET status = 'active' WHERE id = $1 AND status = 'candidate'", [
+      candidateId,
+    ]);
+    if (res.rowCount === 0) return false;
+    await client.query("INSERT INTO dream_decisions (run_id, memory_id, action, reason) VALUES ($1, $2, 'add', $3)", [
+      runId,
+      candidateId,
+      reason,
+    ]);
+    return true;
+  });
 }
 
 /** Active memories in the candidate's scope that look similar or share an entity with it. */

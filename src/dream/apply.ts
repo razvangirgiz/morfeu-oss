@@ -119,8 +119,7 @@ async function temporalUpdate(ctx: DecisionContext): Promise<DreamAction> {
     rewritten.id,
   ]);
   if (target) {
-    await handOverSuccessor(client, target, rewritten);
-    await settleChain(client, rewritten, now);
+    await settleChain(client, await handOverSuccessor(client, target, rewritten), now);
   }
   await record(ctx, "temporal_update", rewritten.id);
   return "temporal_update";

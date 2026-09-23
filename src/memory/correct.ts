@@ -58,7 +58,13 @@ export async function correctMemory(app: App, input: CorrectInput, now: Date): P
         attrs: { ...head.attrs, corrects: head.id },
         observed_at: now,
         valid_from: input.valid_from === undefined ? head.valid_from : input.valid_from,
-        valid_until: input.valid_until === undefined ? head.valid_until : input.valid_until,
+        // The old end is kept only if it still comes after the corrected start.
+        valid_until:
+          input.valid_until !== undefined
+            ? input.valid_until
+            : head.valid_until && input.valid_from && head.valid_until <= input.valid_from
+              ? null
+              : head.valid_until,
         supersedes_id: head.id,
         entities: await entitiesOf(client, head.id),
         sourceEventIds: await sourcesOf(client, head.id),
@@ -71,9 +77,9 @@ export async function correctMemory(app: App, input: CorrectInput, now: Date): P
       [head.id, memory.id, now],
     );
     // A successor already announced for the wrong claim now follows the correction.
-    await handOverSuccessor(client, head, memory);
+    const placed = await handOverSuccessor(client, head, memory);
     // A correction reaching further back than the wrong claim also overrides what came before it.
-    await settleChain(client, memory, now);
+    await settleChain(client, placed, now);
     if (head.pinned_at)
       await client.query("UPDATE memories SET pinned_at = $2 WHERE id = $1", [memory.id, head.pinned_at]);
     return { memory, retracted_id: head.id };

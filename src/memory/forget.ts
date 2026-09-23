@@ -39,7 +39,7 @@ export async function forgetMemory(app: App, memoryId: string, reason: string, n
  * Keeps the chain whole around a forgotten memory. In the middle of a chain,
  * its neighbours are linked to each other (the forgotten claim's period
  * simply becomes unknown). At the head, the claim it had replaced is the
- * latest again and gets back the open end it lost to it.
+ * latest again and gets back an open end, unless it had ended on its own later.
  */
 async function closeGap(db: Db, forgotten: Memory): Promise<void> {
   const before = forgotten.supersedes_id;
@@ -63,8 +63,8 @@ async function closeGap(db: Db, forgotten: Memory): Promise<void> {
   await db.query(
     `UPDATE memories
      SET superseded_by_id = NULL,
-         valid_until = CASE WHEN valid_until IS NOT DISTINCT FROM $3 THEN NULL ELSE valid_until END,
-         status = CASE WHEN status = 'superseded' AND valid_until IS NOT DISTINCT FROM $3 THEN 'active' ELSE status END
+         valid_until = CASE WHEN $3::timestamptz IS NULL OR valid_until <= $3 THEN NULL ELSE valid_until END,
+         status = CASE WHEN status = 'superseded' AND ($3::timestamptz IS NULL OR valid_until <= $3) THEN 'active' ELSE status END
      WHERE id = $1 AND superseded_by_id = $2 AND retracted_at IS NULL AND status IN ('active', 'superseded')`,
     [before, forgotten.id, forgotten.valid_from],
   );

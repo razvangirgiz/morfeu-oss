@@ -307,6 +307,45 @@ describe("served head versus announced successor", () => {
     expect(pinned.content).toBe("Alex lives in Paris");
   });
 
+  it("a rewrite dated after the announced move comes after it, and never stops the run", async () => {
+    const { paris } = await parisThenBerlinAt40();
+    await candidate("Alex is in Paris again", days(20));
+    decide({
+      action: "temporal_update",
+      target_id: paris.id,
+      content: "Alex lives in Paris again",
+      valid_from: days(45).toISOString(),
+    });
+    const result = await dream(app, { now: days(21) });
+    expect(result.failed).toBe(0);
+    expect(await servedAt(days(42))).toEqual(["Alex lives in Berlin"]);
+    expect(await servedAt(days(50))).toEqual(["Alex lives in Paris again"]);
+    await assertNoOverlap();
+  });
+
+  it("a correction dated after the announced move comes after it", async () => {
+    const { paris } = await parisThenBerlinAt40();
+    await correctMemory(app, { memoryId: paris.id, content: "Alex lives in Nice", valid_from: days(50) }, days(20));
+    expect(await servedAt(days(45))).toEqual(["Alex lives in Berlin"]);
+    expect(await servedAt(days(55))).toEqual(["Alex lives in Nice"]);
+    await assertNoOverlap();
+  });
+
+  it("a correction reaches past an announced successor that was itself corrected", async () => {
+    const { paris, berlin } = await parisThenBerlinAt40();
+    const hamburg = await correctMemory(app, { memoryId: berlin.id, content: "Alex lives in Hamburg" }, days(15));
+    await correctMemory(app, { memoryId: paris.id, content: "Alex lives in Lyon" }, days(20));
+    expect(await servedAt(days(30), false)).toEqual(["Alex lives in Lyon"]);
+    expect(await servedAt(days(50), false)).toEqual(["Alex lives in Hamburg"]);
+    const next = await saveMemory(
+      app,
+      { content: "Alex lives in Vienna", type: "fact", scope: me, supersedes: hamburg.memory.id, origin: "owner" },
+      days(60),
+    );
+    expect(next.superseded_id).toBe(hamburg.memory.id);
+    await assertNoOverlap(-5, 90);
+  });
+
   it("a change the dream sees before an announced one starts when it was said", async () => {
     const { paris } = await parisThenBerlinAt40();
     await candidate("Alex moved to Rome", days(20));
@@ -335,6 +374,30 @@ describe("forget inside a chain", () => {
     expect(await servedAt(days(30), false)).toEqual(["Alex drives a Tesla"]);
     expect(await servedAt(days(15))).toEqual([]);
     expect((await requireMemory(app.pool, tesla.memory.id)).supersedes_id).toBe(fiat.memory.id);
+    await assertNoOverlap();
+  });
+
+  it("forgetting the latest claims one after another brings the chain back to life", async () => {
+    const fiat = await saveMemory(app, { content: "Alex drives a Fiat", type: "fact", scope: me }, days(0));
+    const ford = await saveMemory(
+      app,
+      { content: "Alex drives a Ford", type: "fact", scope: me, supersedes: fiat.memory.id },
+      days(10),
+    );
+    const tesla = await saveMemory(
+      app,
+      { content: "Alex drives a Tesla", type: "fact", scope: me, supersedes: ford.memory.id },
+      days(20),
+    );
+    await forgetMemory(app, ford.memory.id, "private", days(25));
+    await forgetMemory(app, tesla.memory.id, "private", days(26));
+    expect(await servedAt(days(30), false)).toEqual(["Alex drives a Fiat"]);
+    const again = await saveMemory(
+      app,
+      { content: "Alex drives a Volvo", type: "fact", scope: me, supersedes: fiat.memory.id },
+      days(40),
+    );
+    expect(again.superseded_id).toBe(fiat.memory.id);
     await assertNoOverlap();
   });
 
