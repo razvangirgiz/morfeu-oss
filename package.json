@@ -1,0 +1,71 @@
+{
+  "name": "morfeu",
+  "version": "0.1.0",
+  "description": "Local-first memory for AI agents: an append-only event ledger, background consolidation, and hybrid retrieval that knows what was true when.",
+  "keywords": [
+    "mcp",
+    "memory",
+    "agents",
+    "llm",
+    "postgres",
+    "pgvector",
+    "claude-code",
+    "temporal",
+    "bitemporal"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "author": "Razvan Girgiz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/razvangirgiz/morfeu-oss.git"
+  },
+  "homepage": "https://github.com/razvangirgiz/morfeu-oss#readme",
+  "bugs": {
+    "url": "https://github.com/razvangirgiz/morfeu-oss/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.23.0",
+  "bin": {
+    "morfeu": "./dist/cli.js"
+  },
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/**/*.js",
+    "migrations/*.sql",
+    "docker-compose.yml",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "prepack": "pnpm run build",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check",
+    "format": "biome format --write",
+    "knip": "knip",
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "db:test:up": "docker compose -f docker-compose.test.yml up -d --wait",
+    "db:test:down": "docker compose -f docker-compose.test.yml down -v",
+    "check:size": "node scripts/check-size.mjs",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run knip && pnpm run check:size && pnpm run test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "openai": "^7.5.0",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.11",
+    "@types/node": "^22.20.4",
+    "@types/pg": "^8.23.1",
+    "knip": "6.34.0",
+    "typescript": "7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

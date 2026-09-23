@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // src/cli.ts is the package bin; tests are entries through the vitest plugin.
+  "entry": ["src/cli.ts", "scripts/*.mjs"],
+  "project": ["src/**/*.ts", "test/**/*.ts", "scripts/*.mjs"]
+}

@@ -1,0 +1,27 @@
+# The Postgres that `morfeu init` manages for you. Bring your own instead by
+# setting MORFEU_DATABASE_URL (Postgres 16+ with the pgvector extension).
+name: morfeu
+services:
+  db:
+    image: ${MORFEU_PG_IMAGE:-pgvector/pgvector:pg18}
+    container_name: morfeu-db
+    restart: unless-stopped
+    ports:
+      # Loopback only: the database is never reachable from the network.
+      - "127.0.0.1:${MORFEU_PG_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: ${MORFEU_PG_USER:-morfeu}
+      POSTGRES_PASSWORD: ${MORFEU_PG_PASSWORD:-morfeu}
+      POSTGRES_DB: ${MORFEU_PG_DATABASE:-morfeu}
+    volumes:
+      - morfeu-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+volumes:
+  morfeu-db-data:
+    name: morfeu-db-data

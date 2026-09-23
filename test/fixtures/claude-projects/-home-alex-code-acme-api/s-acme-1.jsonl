@@ -1,0 +1,8 @@
+{"type": "user", "uuid": "u-1", "sessionId": "s-acme-1", "timestamp": "2026-03-01T09:00:00Z", "cwd": "/home/alex/code/acme-api", "message": {"role": "user", "content": "We decided to move the API from Express to Fastify because of request throughput."}}
+{"type": "assistant", "uuid": "a-1", "sessionId": "s-acme-1", "timestamp": "2026-03-01T09:00:05Z", "cwd": "/home/alex/code/acme-api", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "hidden"}, {"type": "text", "text": "Understood. I will plan the migration to Fastify."}, {"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}
+{"type": "user", "uuid": "u-2", "sessionId": "s-acme-1", "timestamp": "2026-03-01T09:01:00Z", "cwd": "/home/alex/code/acme-api", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}}
+{"type": "user", "uuid": "u-3", "sessionId": "s-acme-1", "timestamp": "2026-03-01T09:02:00Z", "cwd": "/home/alex/code/acme-api", "message": {"role": "user", "content": "<command-name>/clear</command-name>"}}
+{"type": "user", "uuid": "u-4", "sessionId": "s-acme-1", "timestamp": "2026-03-01T09:03:00Z", "cwd": "/home/alex/code/acme-api", "message": {"role": "user", "content": "/model"}}
+{"type": "summary", "summary": "x"}
+{"type": "user", "uuid": "u-5", "sessionId": "s-acme-1", "timestamp": "2026-03-01T09:04:00Z", "cwd": "/home/alex/code/acme-api", "message": {"role": "user", "content": "By the way I prefer small pull requests, and my token is ghp_abcdefghijklmnopqrstuvwxyz0123456789"}}
+{"type":"user","uuid":"u-partial"
