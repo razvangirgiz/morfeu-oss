@@ -50,7 +50,11 @@ export async function runDemo(config: Config, out: (line: string) => void): Prom
 async function tour(app: App, out: (line: string) => void): Promise<void> {
   const me = { type: "user" as const, id: "me" };
   const alex = [{ name: "Alex", type: "person" as const }];
-  const say = (text: string) => out(`\n${text}`);
+  let first = true;
+  const say = (text: string) => {
+    out(first ? text : `\n${text}`);
+    first = false;
+  };
   const show = async (query: string, asOf?: Date) => {
     const r = await search(app, query, { now: day(60), asOf, limit: 1 });
     out(`  → ${r.hits[0]?.memory.content ?? "(nothing)"}`);
