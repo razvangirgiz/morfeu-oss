@@ -57,7 +57,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "openai": "^7.57.0",
+    "openai": "^7.62.0",
     "pg": "^8.23.1"
   },
   "devDependencies": {
